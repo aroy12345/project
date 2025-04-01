@@ -1,0 +1,5 @@
+[submodule "external/legato"]
+	path = external/legato
+	url = https://github.com/UT-HCRL/LEGATO
+	branch = motion
+	shallow = true

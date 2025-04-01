@@ -1,0 +1,103 @@
+# Ignore data folder
+PRESTO/data/
+
+# Project directories
+/GIGA/
+/curobo/
+/data/
+/myenv/
+/torch_robotics/
+/motion_planning_baselines/
+
+# Ignore run files
+run-326-*
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Evaluation outputs
+*.pkl
+*-S64-G*-C1.txt
+*-S64-G*-C1.pkl
+
+# Build artifacts
+presto/src/presto.egg-info/
+
+# Model checkpoints
+*.ckpt
+save/
+
+# Environment
+venv/
+env/
+
+# Logging and temporary files
+wandb/
+logs/
+tmp/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Distribution / packaging
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Documentation
+docs/_build/
+docs/site/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Additional data formats
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.mp4
+*.pickle
+
+# Profiling and debugging
+*.prof
+*.lprof
+torch_compile_debug/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Additional log files
+*.log
+*.out
+results/
