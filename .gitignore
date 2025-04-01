@@ -8,7 +8,7 @@ PRESTO/data/
 /data/
 /myenv/
 /torch_robotics/
-/motion_planning_baselines/
+/motion_planning_baselines
 
 # Ignore run files
 run-326-*
