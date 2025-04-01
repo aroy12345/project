@@ -2,7 +2,8 @@
 PRESTO/data/
 
 # Project directories
-/GIGA/
+
+/GIGA/data
 /curobo/
 /data/
 /myenv/
