@@ -128,7 +128,7 @@ def _quat_loss_fn(pred, target):
     pred_norm = F.normalize(pred, p=2, dim=-1)
     target_norm = F.normalize(target, p=2, dim=-1)
     # Return 1 - |dot product|, shape [B, M]
-    return 1.0 - torch.abs(torch.sum(pred_norm * target_norm, dim=-1))
+    return 1.0 - th.abs(th.sum(pred_norm * target_norm, dim=-1))
 
 def _width_loss_fn(pred, target):
     # Scale width prediction/target before MSE as in GIGA

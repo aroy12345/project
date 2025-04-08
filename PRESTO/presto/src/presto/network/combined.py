@@ -231,7 +231,7 @@ class PrestoGIGA(nn.Module):
         cfg = self.cfg # Use local cfg for brevity
 
         # Initialize rotation representation (used for decoder out_dim)
-        self.rot_dim = 6 # Example: 6D rotation representation
+        self.rot_dim = 4 # Example: 6D rotation representation
 
         if cfg.encoder_type:
             # Instantiate the TSDF/Voxel Encoder
