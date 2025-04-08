@@ -111,9 +111,12 @@ def dict_to_namespace(d):
         return d
 
 # --- GIGA Loss Helper Functions ---
-def _qual_loss_fn(pred, target):
-    # Ensure target is float for BCE
-    return F.binary_cross_entropy(pred, target.float(), reduction="none")
+def _qual_loss_fn(pred_logits, target):
+    """Calculates BCE loss from logits."""
+    # pred_logits shape: [B, M]
+    # target shape: [B, M]
+    # Ensure target is float for BCEWithLogitsLoss
+    return F.binary_cross_entropy_with_logits(pred_logits, target.float(), reduction="none")
 
 def _rot_loss_fn(pred, target):
     # Target shape: [B, M, 4] (assuming single GT from dummy data)
@@ -132,10 +135,12 @@ def _width_loss_fn(pred, target):
     # Shape: [B, M]
     return F.mse_loss(40 * pred, 40 * target, reduction="none")
 
-def _tsdf_loss_fn(pred, target):
-    # Using BCE for occupancy/TSDF prediction, ensure target is float
-    # pred/target shape: [B, N_tsdf]
-    return F.binary_cross_entropy(pred, target.float(), reduction="none")
+def _tsdf_loss_fn(pred_logits, target):
+    """Calculates BCE loss from logits for TSDF."""
+    # pred_logits shape: [B, N_tsdf]
+    # target shape: [B, N_tsdf]
+    # Using BCEWithLogitsLoss, ensure target is float
+    return F.binary_cross_entropy_with_logits(pred_logits, target.float(), reduction="none")
 
 def train_loop(
     log_dir: str,
@@ -231,7 +236,8 @@ def train_loop(
             # ===========================
 
             # Extract ground truth data from batch
-            true_action_ds = batch['trajectory'] # Shape: [B, Seq, Obs] - Use 'trajectory' key
+            # Transpose immediately to [B, C, T] format for diffusion
+            true_action_ds = batch['trajectory'].swapaxes(-1, -2) # Shape: [B, Obs, Seq] -> [B, C, T]
             cond_data = batch['env-label']   # Shape: [B, Cond]
             tsdf_grid = batch['tsdf']        # Shape: [B, 1, D, D, D]
             grasp_query_points = batch['grasp_query_points'] # Shape: [B, N_grasp, 3]
@@ -249,13 +255,17 @@ def train_loop(
                 0, diff_step_max,
                 (batch_size,), device=device
             ).long()
-            noise = th.randn(true_action_ds.shape, device=device)
+            # Create noise with the same shape, device, and dtype as the target tensor
+            noise = th.randn_like(true_action_ds)
+
             noisy_actions = sched.add_noise(true_action_ds, noise, steps)
 
             # --- Model Forward Pass ---
             with th.cuda.amp.autocast(enabled=use_amp):
+                # Transpose noisy_actions from [B, C, T] to [B, T, C] for the model's PatchEmbed
+                model_input_sample = noisy_actions.swapaxes(-1, -2)
                 model_output = model(
-                    sample=noisy_actions,
+                    sample=model_input_sample, # Pass the transposed tensor
                     timestep=steps,
                     class_labels=cond_data,
                     tsdf=tsdf_grid,
@@ -266,20 +276,22 @@ def train_loop(
                 )
 
                 # Extract predictions
-                pred_noise_or_x0 = model_output['sample']  # NOT 'diffusion'
-                pred_grasp_qual = model_output['qual']     # NOT 'grasp_qual'
-                pred_grasp_rot = model_output['rot']       # NOT 'grasp_rot'
-                pred_grasp_width = model_output['width']   # NOT 'grasp_width'
-                pred_tsdf = model_output.get('tsdf')  
+                # Model output 'sample' is expected to be [B, C, T] from forward_diffusion
+                pred_noise_or_x0 = model_output['sample']
+                pred_grasp_qual = model_output['qual']
+                pred_grasp_rot = model_output['rot']
+                pred_grasp_width = model_output['width']
+                pred_tsdf = model_output.get('tsdf') # Use .get() for optional TSDF output
 
                 # --- Loss Calculation ---
                 total_loss = 0.0
                 loss_dict = {}
 
                 # 1. Diffusion Loss (PRESTO)
+                # Expects preds [B, C, T], trajs [B, C, T], noise [B, C, T]
                 loss_ddpm = diffusion_loss(
                     pred_noise_or_x0, true_action_ds,
-                    noise, noisy_actions, steps,
+                    noise, noisy_actions, steps, # noisy_actions is still [B, C, T] here
                     sched=sched,
                     reduction=('none' if reweight_loss_by_coll else 'mean')
                 )
@@ -634,14 +646,13 @@ def train(
     # Define model config explicitly (can be a dict or ModelConfig dataclass)
     # Example using a dictionary:
     model_config = {
+         'input_size': seq_len, # Good practice to set this too
+         'patch_size': 10,      # <<< ADD THIS LINE (e.g., 10 divides 50)
          'in_channels': obs_dim,
-         'out_channels': obs_dim,
-         'input_size': obs_dim, # DiT input size is usually channels
-         'depth': model_depth,
-         'num_heads': model_num_heads,
-         'patch_size': model_patch_size, # For 1D data
-         'cond_dim': cond_dim,
          'hidden_size': model_hidden_size,
+         'num_layer': model_depth,
+         'num_heads': model_num_heads,
+         'cond_dim': cond_dim,
          'adaln_scale': 1.0,
          'learn_sigma': False,
          'use_cond': True,
@@ -649,13 +660,12 @@ def train(
          # GIGA/ConvONet specific parts
          'grid_size': tsdf_dim,
          'encoder': giga_encoder,
-         'encoder_kwargs': {'plane_type': ['xz', 'xy', 'yz'], 'plane_resolution': 32, 'unet3d': False, 'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim}},
+         'encoder_kwargs': {'plane_type': ['grid', 'xz', 'xy', 'yz'],'grid_resolution': 32, 'plane_resolution': 32, 'unet3d': False, 'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim}},
          'decoder': giga_decoder,
          'decoder_kwargs': {'sample_mode': 'bilinear', 'hidden_size': 32},
          'c_dim': giga_c_dim, # Feature dim from GIGA encoder
          'padding': 0.1,
          'n_classes': 1, # For grasp quality
-         'num_layer': model_depth, # Assuming depth corresponds to num_layer
          'mlp_ratio': 4.0, # Add default or pass as arg if needed
          'class_dropout_prob': 0.0, # Add default
          'use_pos_emb': False, # Add default
@@ -664,8 +674,8 @@ def train(
          'cat_emb_x': False, # Add default
          'use_cond_token': False, # Add default
          'use_cloud': False, # Add default
-         'use_grasp': True, # Add default
-         'use_tsdf': True, # Add default (assuming tsdf_coef > 0 implies this)
+         'use_grasp': grasp_coef > 0 or tsdf_coef > 0,
+         'use_tsdf': tsdf_coef > 0,
          'decoder_type': giga_decoder, # Already present via giga_decoder
          'use_joint_embeddings': True, # Add default
          'encoder_type': giga_encoder, # Already present via giga_encoder

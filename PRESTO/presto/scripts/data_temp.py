@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 def generate_dummy_datapoint(
-    seq_len=50,
+    seq_len=100,
     obs_dim=7,      # Franka Panda joints
     cond_dim=104,   # Example conditioning dimension
     tsdf_dim=32,    # Example grid size for TSDF

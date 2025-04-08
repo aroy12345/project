@@ -37,12 +37,16 @@ class TSDFEmbedder(nn.Module):
     """Encoder for TSDF voxel grids from GIGA"""
     def __init__(self, hidden_size: int = 256, c_dim: int = 32):
         super().__init__()
-        self.conv1 = nn.Conv3d(1, 16, 3, stride=2, padding=1)
+        # Input to this embedder is the output of tsdf_encoder, which has c_dim channels
+        self.conv1 = nn.Conv3d(c_dim, 16, 3, stride=2, padding=1)
         self.conv2 = nn.Conv3d(16, 32, 3, stride=2, padding=1)
         self.conv3 = nn.Conv3d(32, 64, 3, stride=2, padding=1)
         self.conv4 = nn.Conv3d(64, c_dim, 3, stride=2, padding=1)
-        
-        self.proj = nn.Linear(c_dim * 3 * 3 * 3, hidden_size)
+
+        # Calculate the flattened size after convolutions (assuming input 32x32x32 -> 2x2x2)
+        # If the encoder output spatial dim changes, this needs update.
+        flat_size = c_dim * 2 * 2 * 2
+        self.proj = nn.Linear(flat_size, hidden_size)
         self.c_dim = c_dim
         
     def forward(self, x):
@@ -144,9 +148,11 @@ class PrestoGIGA(nn.Module):
         
         encoder_type: Optional[str] = 'voxel_simple_local'
         encoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-            'plane_type': ['xz', 'xy', 'yz'],
+            'plane_type': ['grid'],
             'plane_resolution': 40,
+            'grid_resolution': 32,
             'unet': True,
+            'unet3d': True,
             'unet_kwargs': {
                 'depth': 3,
                 'merge_mode': 'concat',
@@ -221,36 +227,74 @@ class PrestoGIGA(nn.Module):
         self.final_layer = FinalLayer(cfg.hidden_size, cfg.patch_size, self.out_channels)
         
     def _init_grasp(self):
-        """Initialize grasp model components from GIGA"""
-        cfg = self.cfg
-        device = self.device
-        
-        c = {'grid_feat': torch.zeros(1, cfg.c_dim, 1, 1, 1, device=device)}
-        
-        if cfg.use_grasp:
-            decoder_class = decoder_dict[cfg.decoder_type]
-            
-            self.decoder_qual = decoder_class(
-                c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **vars(cfg.decoder_kwargs)
+        """Initialize GIGA components (encoder, decoder, embedder)"""
+        cfg = self.cfg # Use local cfg for brevity
+
+        # Initialize rotation representation (used for decoder out_dim)
+        self.rot_dim = 6 # Example: 6D rotation representation
+
+        if cfg.encoder_type:
+            # Instantiate the TSDF/Voxel Encoder
+            encoder_cls = encoder_dict[cfg.encoder_type]
+            self.tsdf_encoder = encoder_cls(
+                c_dim=cfg.c_dim,
+                padding=cfg.padding,
+                **vars(cfg.encoder_kwargs)
             )
-            
-            self.decoder_rot = decoder_class(
-                c_dim=cfg.c_dim, padding=cfg.padding, out_dim=4,
-                **vars(cfg.decoder_kwargs)
-            )
-            
-            self.decoder_width = decoder_class(
-                c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **vars(cfg.decoder_kwargs)
-            )
-        
-        if cfg.use_tsdf:
-            self.decoder_tsdf = decoder_dict[cfg.decoder_type](
-                c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **vars(cfg.decoder_kwargs)
-            )
-        
+        else:
+            self.tsdf_encoder = None
+
+        # Instantiate the TSDF Embedder (for conditioning DiT)
+        self.tsdf_embedder = TSDFEmbedder(
+            hidden_size=cfg.hidden_size,
+            c_dim=cfg.c_dim
+        )
+
+        # --- MODIFIED DECODER INITIALIZATION ---
+        self.decoder_qual = None
+        self.decoder_rot = None
+        self.decoder_width = None
+        self.decoder_tsdf = None # Optional: if you predict TSDF too
+
+        if cfg.decoder_type and (cfg.use_grasp or cfg.use_tsdf):
+            decoder_cls = decoder_dict[cfg.decoder_type]
+
+            # Common arguments for all decoders
+            common_decoder_kwargs = {
+                'dim': 3,
+                'c_dim': cfg.c_dim,
+                **vars(cfg.decoder_kwargs) # Unpack specific decoder args
+            }
+
+            if cfg.use_grasp:
+                # Decoder for Quality (output dim 1)
+                self.decoder_qual = decoder_cls(
+                    out_dim=1,
+                    **common_decoder_kwargs
+                )
+                # Decoder for Rotation (output dim self.rot_dim)
+                self.decoder_rot = decoder_cls(
+                    out_dim=self.rot_dim,
+                    **common_decoder_kwargs
+                )
+                # Decoder for Width (output dim 1)
+                self.decoder_width = decoder_cls(
+                    out_dim=1,
+                    **common_decoder_kwargs
+                )
+
+            if cfg.use_tsdf:
+                 # Optional: Decoder for TSDF prediction (output dim 1)
+                 self.decoder_tsdf = decoder_cls(
+                     out_dim=1,
+                     **common_decoder_kwargs
+                 )
+        # --- END MODIFIED DECODER INITIALIZATION ---
+
+        # Remove the single self.decoder initialization if it exists elsewhere
+        # if hasattr(self, 'decoder'):
+        #     del self.decoder
+
         self.apply(self._init_weights)
         
     def _init_weights(self, m):
@@ -315,7 +359,11 @@ class PrestoGIGA(nn.Module):
         if tsdf is not None:
             if self.tsdf_encoder is not None:
                 tsdf_features = self.tsdf_encoder(tsdf)
-                tsdf_tensor = tsdf_features['grid_feat']
+                if 'grid' in tsdf_features:
+                    tsdf_tensor = tsdf_features['grid']
+                else:
+                    raise KeyError("Expected 'grid' key in tsdf_encoder output, "
+                                   f"but found keys: {tsdf_features.keys()}")
             else:
                 tsdf_tensor = tsdf
             
@@ -325,11 +373,12 @@ class PrestoGIGA(nn.Module):
             tsdf_embed = None
             
         if x_embed is not None and tsdf_embed is not None and self.cfg.use_joint_embeddings:
-            features = torch.cat([x_embed, tsdf_embed.expand(-1, 1, -1)], dim=1)
+            features = torch.cat([x_embed, tsdf_embed], dim=1)
         elif x_embed is not None:
             features = x_embed
         elif tsdf_embed is not None:
             features = tsdf_embed.expand(-1, self.x_embedder.num_patches, -1)
+            features = features + self.pos_embed
         else:
             raise ValueError("Either x or tsdf must be provided")
             
@@ -342,13 +391,25 @@ class PrestoGIGA(nn.Module):
             else:
                 c = t_embed
         else:
-            batch_size = features.shape[0]
-            c = torch.zeros(batch_size, self.cfg.hidden_size, device=features.device)
-            
+            c = None
+
+        if x_embed is not None:
+            features = x_embed
+        elif tsdf_embed is not None:
+            features = tsdf_embed.expand(-1, self.x_embedder.num_patches, -1)
+            features = features + self.pos_embed
+        else:
+            raise ValueError("Either x or tsdf must be provided")
+
+        if c is not None and tsdf_embed is not None:
+            c = c + tsdf_embed.squeeze(1)
+        elif c is None and tsdf_embed is not None:
+            c = tsdf_embed.squeeze(1)
+
         for block in self.blocks:
             features = block(features, c)
-            
-        return features, c
+
+        return features, c, tsdf_features
         
     def forward_diffusion(self, features, c):
         """
@@ -369,33 +430,47 @@ class PrestoGIGA(nn.Module):
         x = self.unpatchify(x)
         return x
         
-    def forward_grasp(self, features, positions):
+    def forward_grasp(self, p, tsdf_features):
         """
-        Process features through grasp output heads using GIGA's decoders
-        
+        Predict grasp affordance using the GIGA decoder heads.
+
         Args:
-            features: [B, N, D] transformer features
-            positions: [B, M, 3] query positions
-            
+            p (torch.Tensor): Query points [B, M, 3].
+            tsdf_features (dict): Feature dictionary from the tsdf_encoder (e.g., {'grid': tensor}).
+
         Returns:
-            qual: [B, M, 1] grasp quality
-            rot: [B, M, 4] grasp rotation
-            width: [B, M, 1] grasp width
+            qual, rot, width tensors.
         """
-        point_features = self.feature_extractor(
-            features, positions, self.cfg.grid_size)
-        
-        batch_size = point_features.shape[0]
-        c = {
-            'grid_feat': point_features.reshape(batch_size, self.cfg.c_dim, 1, 1, 1)
-        }
-        
-        qual = self.decoder_qual(positions, c)
-        qual = torch.sigmoid(qual)
-        rot = self.decoder_rot(positions, c)
-        rot = F.normalize(rot, dim=2)
-        width = self.decoder_width(positions, c)
-        
+        batch_size = p.size(0)
+        num_queries = p.size(1)
+
+        # --- MODIFIED DECODER CALLS ---
+        # Call each specific decoder head
+        if self.decoder_qual is not None:
+            qual = self.decoder_qual(p, tsdf_features) # [B, M, 1]
+        else:
+            qual = torch.zeros(batch_size, num_queries, 1, device=p.device)
+            warnings.warn("Grasp quality decoder is not initialized.", RuntimeWarning)
+
+        if self.decoder_rot is not None:
+            rot = self.decoder_rot(p, tsdf_features) # [B, M, rot_dim]
+        else:
+            rot = torch.zeros(batch_size, num_queries, self.rot_dim, device=p.device)
+            warnings.warn("Grasp rotation decoder is not initialized.", RuntimeWarning)
+
+        if self.decoder_width is not None:
+            width = self.decoder_width(p, tsdf_features) # [B, M, 1]
+        else:
+            width = torch.zeros(batch_size, num_queries, 1, device=p.device)
+            warnings.warn("Grasp width decoder is not initialized.", RuntimeWarning)
+        # --- END MODIFIED DECODER CALLS ---
+
+        # Ensure outputs have the expected last dimension if necessary
+        # (Decoders might already output [B, M, 1] or [B, M, rot_dim])
+        # Example: if qual is [B, M], uncomment below
+        # if qual.dim() == 2: qual = qual.unsqueeze(-1)
+        # if width.dim() == 2: width = width.unsqueeze(-1)
+
         return qual, rot, width
         
     def forward_tsdf(self, features, positions):
@@ -460,7 +535,7 @@ class PrestoGIGA(nn.Module):
                     pass
                 timestep = timestep.to(sample.device if sample is not None else tsdf.device)
             
-            features, c = self.encode_shared(
+            features, c, tsdf_features = self.encode_shared(
                 x=sample, tsdf=tsdf, t=timestep, y=class_labels)
             
             results = {}
@@ -470,7 +545,7 @@ class PrestoGIGA(nn.Module):
                 results["sample"] = diffusion_out
             
             if mode in ["grasp", "joint"] and p is not None:
-                qual, rot, width = self.forward_grasp(features, p)
+                qual, rot, width = self.forward_grasp(p, tsdf_features)
                 results["qual"] = qual
                 results["rot"] = rot
                 results["width"] = width
@@ -480,13 +555,17 @@ class PrestoGIGA(nn.Module):
                 results["tsdf"] = tsdf_out
                 
             if not return_dict:
+                # If not returning dict, the original code returned the dict anyway.
+                # We'll keep returning the full dict for consistency.
+                # If a tuple output is desired for return_dict=False, this needs adjustment.
                 return results
-                
-            if "sample" in results:
-                return UNet1DOutput(results["sample"])
-            
+
+            # --- MODIFIED RETURN LOGIC ---
+            # Always return the full results dictionary if return_dict is True,
+            # making all computed outputs accessible.
             return results
-            
+            # --- END MODIFICATION ---
+
     def grad_refine(self, tsdf, pos, bound_value=0.0125, lr=1e-6, num_step=1):
         """
         Gradient-based refinement of grasp positions using GIGA's approach

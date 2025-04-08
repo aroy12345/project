@@ -55,14 +55,34 @@ class LocalVoxelEncoder(nn.Module):
 
 
     def generate_plane_features(self, p, c, plane='xz'):
+        # p: [B, N_voxels, 3] e.g. [8, 32768, 3]
+        # c: [B, N_voxels, C_dim] e.g. [8, 32768, 32] (Input c from forward)
+
         # acquire indices of features in plane
-        xy = normalize_coordinate(p.clone(), plane=plane, padding=self.padding)
+        xy = normalize_coordinate(p.clone(), plane=plane, padding=self.padding) # Shape: [B, N_voxels, 2]
+        # index from corrected coordinate2index: [B, N_voxels] e.g. [8, 32768]
         index = coordinate2index(xy, self.reso_plane)
 
         # scatter plane features from points
+        # Permute c to [B, C_dim, N_voxels] for scatter_mean's src argument
+        c = c.permute(0, 2, 1) # Shape: [B, C_dim, N_voxels] e.g. [8, 32, 32768]
+
+        # Output shape needs to be [B, C_dim, reso^2]
         fea_plane = c.new_zeros(p.size(0), self.c_dim, self.reso_plane**2)
-        c = c.permute(0, 2, 1)
-        fea_plane = scatter_mean(c, index, out=fea_plane)
+
+        # Expand index to match the dimensions of src (c) for scattering
+        # Target index shape for scatter_mean: [B, C_dim, N_voxels]
+        # Current index shape: [B, N_voxels]
+        # Add C_dim dimension and expand
+        index = index.unsqueeze(1).expand_as(c) # Shape: [8, 32, 32768]
+
+        # Scatter c along the last dimension (dim=-1)
+        # src = c [B, C_dim, N_voxels]
+        # index = index [B, C_dim, N_voxels] <--- Corrected shape
+        # out = fea_plane [B, C_dim, reso^2]
+        fea_plane = scatter_mean(src=c, index=index, dim=-1, out=fea_plane, dim_size=self.reso_plane**2)
+
+        # Reshape fea_plane to expected [B, C_dim, reso, reso] format for UNet
         fea_plane = fea_plane.reshape(p.size(0), self.c_dim, self.reso_plane, self.reso_plane)
 
         # process the plane features with UNet
@@ -72,12 +92,28 @@ class LocalVoxelEncoder(nn.Module):
         return fea_plane
 
     def generate_grid_features(self, p, c):
-        p_nor = normalize_3d_coordinate(p.clone(), padding=self.padding)
+        # p: [B, N_voxels, 3] e.g. [8, 32768, 3]
+        # c: [B, N_voxels, C_dim] e.g. [8, 32768, 32] (Input c from forward)
+
+        p_nor = normalize_3d_coordinate(p.clone(), padding=self.padding) # Shape: [B, N_voxels, 3]
+        # index from corrected coordinate2index: [B, N_voxels] e.g. [8, 32768]
         index = coordinate2index(p_nor, self.reso_grid, coord_type='3d')
+
         # scatter grid features from points
+        # Output shape: [B, C_dim, reso_grid^3]
         fea_grid = c.new_zeros(p.size(0), self.c_dim, self.reso_grid**3)
-        c = c.permute(0, 2, 1)
-        fea_grid = scatter_mean(c, index, out=fea_grid)
+        # Permute c to [B, C_dim, N_voxels] for scatter_mean's src argument
+        c = c.permute(0, 2, 1) # Shape: [B, C_dim, N_voxels] e.g. [8, 32, 32768]
+
+        # Expand index to match the dimensions of src (c) for scattering
+        # Target index shape: [B, C_dim, N_voxels]
+        # Current index shape: [B, N_voxels]
+        # Add C_dim dimension and expand
+        index = index.unsqueeze(1).expand_as(c) # Shape: [8, 32, 32768]
+
+        # Scatter along dim=-1 (N_voxels dimension)
+        fea_grid = scatter_mean(src=c, index=index, dim=-1, out=fea_grid, dim_size=self.reso_grid**3)
+
         fea_grid = fea_grid.reshape(p.size(0), self.c_dim, self.reso_grid, self.reso_grid, self.reso_grid)
 
         if self.unet3d is not None:
@@ -87,30 +123,36 @@ class LocalVoxelEncoder(nn.Module):
 
 
     def forward(self, x):
+        # Input x shape: [B, C_in, G, G, G], e.g., [8, 1, 32, 32, 32]
         batch_size = x.size(0)
         device = x.device
-        n_voxel = x.size(1) * x.size(2) * x.size(3)
+        # Use spatial dimensions (G, G, G) starting from index 2
+        grid_res = x.shape[2:5] # Tuple (G, G, G)
+        n_voxel = grid_res[0] * grid_res[1] * grid_res[2] # G*G*G
 
-        # voxel 3D coordintates
-        coord1 = torch.linspace(-0.5, 0.5, x.size(1)).to(device)
-        coord2 = torch.linspace(-0.5, 0.5, x.size(2)).to(device)
-        coord3 = torch.linspace(-0.5, 0.5, x.size(3)).to(device)
+        # Create coordinates for the GxGxG grid
+        coord1 = torch.linspace(-0.5, 0.5, grid_res[0], device=device)
+        coord2 = torch.linspace(-0.5, 0.5, grid_res[1], device=device)
+        coord3 = torch.linspace(-0.5, 0.5, grid_res[2], device=device)
 
-        coord1 = coord1.view(1, -1, 1, 1).expand_as(x)
-        coord2 = coord2.view(1, 1, -1, 1).expand_as(x)
-        coord3 = coord3.view(1, 1, 1, -1).expand_as(x)
-        p = torch.stack([coord1, coord2, coord3], dim=4)
-        p = p.view(batch_size, n_voxel, -1)
+        # Create meshgrid and expand to batch size
+        grid_coords = torch.stack(torch.meshgrid(coord1, coord2, coord3, indexing='ij'), dim=-1) # Shape [G, G, G, 3]
+        p = grid_coords.unsqueeze(0).expand(batch_size, -1, -1, -1, -1) # Shape [B, G, G, G, 3]
+        p = p.reshape(batch_size, n_voxel, 3) # Shape [B, n_voxel, 3], e.g., [8, 32768, 3]
 
         # Acquire voxel-wise feature
-        x = x.unsqueeze(1)
-        c = self.actvn(self.conv_in(x)).view(batch_size, self.c_dim, -1)
-        c = c.permute(0, 2, 1)
+        # conv_in expects [B, C_in, G, G, G] - input x is already in this format
+        c = self.actvn(self.conv_in(x)) # Output shape [B, c_dim, G, G, G]
+        # Flatten spatial dimensions G*G*G = n_voxel
+        c = c.view(batch_size, self.c_dim, n_voxel) # Shape [B, c_dim, n_voxel], e.g., [8, 32, 32768]
+        c = c.permute(0, 2, 1) # Shape [B, n_voxel, c_dim], e.g., [8, 32768, 32]
 
         fea = {}
         if 'grid' in self.plane_type:
+            # Pass the correctly shaped p and c
             fea['grid'] = self.generate_grid_features(p, c)
         else:
+            # Pass the correctly shaped p and c
             if 'xz' in self.plane_type:
                 fea['xz'] = self.generate_plane_features(p, c, plane='xz')
             if 'xy' in self.plane_type:

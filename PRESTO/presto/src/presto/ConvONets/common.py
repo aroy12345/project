@@ -302,19 +302,23 @@ def normalize_coord(p, vol_range, plane='xz'):
 
 def coordinate2index(x, reso, coord_type='2d'):
     ''' Normalize coordinate to [0, 1] for unit cube experiments.
-        Corresponds to our 3D model
-
+        Corresponds to our definition of ONet items.
     Args:
-        x (tensor): coordinate
+        x (tensor): coordinate shape [B, N, D]
         reso (int): defined resolution
         coord_type (str): coordinate type
+    Returns:
+        index (tensor): shape [B, N]
     '''
     x = (x * reso).long()
+    # Clamp coordinates to be within [0, reso-1] to avoid out-of-bounds indices
+    x = torch.clamp(x, 0, reso - 1)
+
     if coord_type == '2d': # plane
         index = x[:, :, 0] + reso * x[:, :, 1]
     elif coord_type == '3d': # grid
         index = x[:, :, 0] + reso * (x[:, :, 1] + reso * x[:, :, 2])
-    index = index[:, None, :]
+    # index = index[:, None, :] # REMOVE THIS LINE
     return index
 
 def coord2index(p, vol_range, reso=None, plane='xz'):

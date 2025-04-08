@@ -73,12 +73,13 @@ class PatchEmbed(nn.Module):
         self.num_patches = input_size // patch_size
 
     def forward(self, x):
-        # x:  NXCxT -> NxTxD
-        x = einops.rearrange(x, '... d s -> ... s d')
-        x = self.emb_x(x)
+        # x:  Input should be [B, T, C] e.g., [8, 50, 7]
+        # x = einops.rearrange(x, '... d s -> ... s d') # REMOVE or COMMENT OUT this line
+        x = self.emb_x(x) # Shape remains [8, 50, 7]
+        # Now, this rearrange operates on the sequence dim (50)
         x = einops.rearrange(x, '... (n g) d -> ... n (g d)',
                              g=self.patch_size
-                             )
+                             ) # Output shape: [8, 5, 70] (B, NumPatches, PatchSize*Channels)
         x = self.proj(x)
         return x
 
