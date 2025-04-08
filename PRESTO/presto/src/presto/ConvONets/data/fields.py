@@ -4,9 +4,9 @@ import random
 from PIL import Image
 import numpy as np
 import trimesh
-from vgn.ConvONets.data.core import Field
-from vgn.ConvONets.utils import binvox_rw
-from vgn.ConvONets.common import coord2index, normalize_coord
+from presto.ConvONets.data.core import Field
+from presto.ConvONets.utils import binvox_rw
+from presto.ConvONets.common import coord2index, normalize_coord
 
 
 class IndexField(Field):

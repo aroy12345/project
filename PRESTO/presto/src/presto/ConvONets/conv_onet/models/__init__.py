@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import distributions as dist
-from vgn.ConvONets.conv_onet.models import decoder
+from presto.ConvONets.conv_onet.models import decoder
 
 # Decoder dictionary
 decoder_dict = {

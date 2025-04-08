@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from vgn.ConvONets.layers import ResnetBlockFC
-from vgn.ConvONets.common import normalize_coordinate, normalize_3d_coordinate, map2local
+from presto.ConvONets.layers import ResnetBlockFC
+from presto.ConvONets.common import normalize_coordinate, normalize_3d_coordinate, map2local
 
 class FCDecoder(nn.Module):
     '''Decoder.

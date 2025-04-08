@@ -1,4 +1,4 @@
-from vgn.ConvONets.encoder import (
+from presto.ConvONets.encoder import (
     pointnet, voxels, pointnetpp
 )
 

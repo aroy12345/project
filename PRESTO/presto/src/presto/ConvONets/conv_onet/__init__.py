@@ -1,4 +1,4 @@
-from vgn.ConvONets.conv_onet import (
+from presto.ConvONets.conv_onet import (
     config, generation, training, models
 )
 

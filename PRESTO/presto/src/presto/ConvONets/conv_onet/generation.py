@@ -4,11 +4,11 @@ from torch import autograd
 import numpy as np
 from tqdm import trange, tqdm
 import trimesh
-from vgn.ConvONets.common import make_3d_grid, normalize_coord, add_key, coord2index
+from presto.ConvONets.common import make_3d_grid, normalize_coord, add_key, coord2index
 try:
-    from vgn.ConvONets.utils import libmcubes
-    from vgn.ConvONets.utils.libsimplify import simplify_mesh
-    from vgn.ConvONets.utils.libmise import MISE
+    from presto.ConvONets.utils import libmcubes
+    from presto.ConvONets.utils.libsimplify import simplify_mesh
+    from presto.ConvONets.utils.libmise import MISE
 except:
     print('import utils failed')
 import time

@@ -1,12 +1,12 @@
 
-from vgn.ConvONets.data.core import (
+from presto.ConvONets.data.core import (
     Shapes3dDataset, collate_remove_none, worker_init_fn
 )
-from vgn.ConvONets.data.fields import (
+from presto.ConvONets.data.fields import (
     IndexField, PointsField,
     VoxelsField, PatchPointsField, PointCloudField, PatchPointCloudField, PartialPointCloudField, 
 )
-from vgn.ConvONets.data.transforms import (
+from presto.ConvONets.data.transforms import (
     PointcloudNoise, SubsamplePointcloud,
     SubsamplePoints,
 )

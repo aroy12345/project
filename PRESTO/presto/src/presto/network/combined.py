@@ -202,7 +202,7 @@ class PrestoGIGA(nn.Module):
         if cfg.encoder_type:
             self.tsdf_encoder = encoder_dict[cfg.encoder_type](
                 c_dim=cfg.c_dim, padding=cfg.padding,
-                **cfg.encoder_kwargs
+                **vars(cfg.encoder_kwargs)
             )
         else:
             self.tsdf_encoder = None
@@ -218,7 +218,7 @@ class PrestoGIGA(nn.Module):
             for _ in range(cfg.num_layer)
         ])
         
-        self.final_layer = FinalLayer(cfg.hidden_size, self.out_channels)
+        self.final_layer = FinalLayer(cfg.hidden_size, cfg.patch_size, self.out_channels)
         
     def _init_grasp(self):
         """Initialize grasp model components from GIGA"""
@@ -232,35 +232,44 @@ class PrestoGIGA(nn.Module):
             
             self.decoder_qual = decoder_class(
                 c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **cfg.decoder_kwargs
+                **vars(cfg.decoder_kwargs)
             )
             
             self.decoder_rot = decoder_class(
                 c_dim=cfg.c_dim, padding=cfg.padding, out_dim=4,
-                **cfg.decoder_kwargs
+                **vars(cfg.decoder_kwargs)
             )
             
             self.decoder_width = decoder_class(
                 c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **cfg.decoder_kwargs
+                **vars(cfg.decoder_kwargs)
             )
         
         if cfg.use_tsdf:
             self.decoder_tsdf = decoder_dict[cfg.decoder_type](
                 c_dim=cfg.c_dim, padding=cfg.padding, out_dim=1,
-                **cfg.decoder_kwargs
+                **vars(cfg.decoder_kwargs)
             )
         
         self.apply(self._init_weights)
         
     def _init_weights(self, m):
+        """Initialize weights for linear and conv layers"""
         if isinstance(m, nn.Linear):
-            torch.nn.init.xavier_uniform_(m.weight)
-            if isinstance(m, nn.Linear) and m.bias is not None:
+            # Use Xavier uniform initialization for linear layers
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.Conv2d, nn.Conv3d)): # Assuming 3D convs might also be used
+            # Use Kaiming normal initialization for conv layers
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+            if m.weight is not None:
+                nn.init.constant_(m.weight, 1.0)
 
     def get_num_patches(self, x_shape):
         return x_shape[-1] // self.patch_size
@@ -437,8 +446,11 @@ class PrestoGIGA(nn.Module):
         Returns:
             Dictionary with model outputs
         """
-        amp_ctx = (nullcontext() if (self.cfg.use_amp is None)
-                  else torch.cuda.amp.autocast(enabled=self.cfg.use_amp))
+        # Safely get the use_amp setting from the config, default to None if not present
+        use_amp_config = getattr(self.cfg, 'use_amp', None)
+
+        amp_ctx = (nullcontext() if (use_amp_config is None)
+                  else torch.cuda.amp.autocast(enabled=use_amp_config))
                   
         with amp_ctx:
             if timestep is not None:

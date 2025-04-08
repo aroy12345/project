@@ -1,849 +1,846 @@
 #!/usr/bin/env python3
 
-from typing import Optional, Union, Dict, Any, List, Tuple
-from dataclasses import dataclass, replace, field
+from typing import Optional, Union, Dict, Any, List
+from dataclasses import dataclass, replace
 from tqdm.auto import tqdm
+import os
 import pickle
 import numpy as np
-from omegaconf import OmegaConf, MISSING
 from icecream import ic
 from contextlib import nullcontext
 import time
 import math
 
-import warp as wp
-import einops
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader # Explicit import
 
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
-from diffusers import DDIMScheduler
+from diffusers import DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
-# NOTE: Import UNet1DOutput based on diffusers version
+
+# Assuming data_temp.py is in the same directory or accessible via PYTHONPATH
 try:
-    from diffusers.models.unet_1d import UNet1DOutput
+    from data_temp import generate_dummy_datapoint, create_batch_from_datapoints
 except ImportError:
-    from diffusers.models.unets.unet_1d import UNet1DOutput
+    print("Error: Could not import from data_temp.py. Make sure it's accessible.")
+    # Define dummy functions if import fails, to allow script structure analysis
+    def generate_dummy_datapoint(**kwargs): return {}
+    def create_batch_from_datapoints(datapoints, device): return {}
 
-# Assuming a combined dataset factory exists or is created
-# from presto.data.factory import (DataConfig, get_combined_dataset)
-from presto.data.factory import DataConfig # Placeholder
-print(DataConfig)
-# Import PrestoGIGA model and its config
-from presto.network.combined import PrestoGIGA # Remove PrestoGIGAConfig from here
-# Import diffusion utilities and scheduler factory
+
+# Assuming franka_util provides the fk function
+try:
+    from presto.data.franka_util import franka_fk
+except ImportError:
+    print("Warning: Could not import franka_fk. Using placeholder.")
+    def franka_fk(q):
+        # Placeholder: returns zeros matching expected output shape [B, S, 3]
+        return th.zeros(q.shape[0], q.shape[1], 3, device=q.device)
+
+# Assuming network factory provides the model
+from presto.network.combined import PrestoGIGA
+# Assuming network factory provides scheduler getter
+from presto.network.factory import get_scheduler, DiffusionConfig, ModelConfig
+
+# Assuming diffusion utils are available
 from presto.diffusion.util import pred_x0, diffusion_loss
-from presto.network.factory import DiffusionConfig, get_scheduler
-# Import utilities
+
+# Assuming cost functions are available
+try:
+    from presto.cost.curobo_cost import CuroboCost
+    # Add imports for cached cost components
+    from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
+except ImportError:
+    print("Warning: CuroboCost or CachedCuroboCost components not found. Collision/Distance losses and reweighting will be disabled.")
+    CuroboCost = None
+    CachedCuroboCost = None
+    # Define a placeholder if the specific function is missing
+    def cached_curobo_cost_with_ng(u_pred_sd, cost_fn_lambda):
+        print("Warning: cached_curobo_cost_with_ng not available. Returning 0.0")
+        # Return a tensor to avoid downstream errors
+        return th.tensor(0.0, device=u_pred_sd.device)
+
+# Assuming normalization utils are available
+try:
+    from presto.data.normalize import Normalize
+except ImportError:
+    print("Warning: Normalize not found. Using placeholder identity normalization.")
+    class Normalize: # Basic placeholder
+        def __init__(self, mean, std, device='cpu'):
+            self.mean = th.tensor(mean, device=device, dtype=th.float32)
+            self.std = th.tensor(std, device=device, dtype=th.float32)
+            self.device = device
+        def __call__(self, x): return (x - self.mean) / self.std
+        def unnormalize(self, x): return x * self.std + self.mean
+        def to(self, device):
+            self.mean = self.mean.to(device)
+            self.std = self.std.to(device)
+            self.device = device
+            return self
+        @classmethod
+        def identity(cls, dim, device='cpu'):
+            return cls(mean=th.zeros(dim), std=th.ones(dim), device=device)
+
+
+# Assuming checkpointing utils are available
 from presto.util.ckpt import (load_ckpt, save_ckpt, last_ckpt)
-from presto.util.path import RunPath, get_path
-from presto.util.hydra_cli import hydra_cli
-from presto.util.wandb_logger import WandbLogger
+# Assuming path utils are available (using basic os.path now)
+# from presto.util.path import RunPath
+import datetime
 
-# --- Import CuroboCost ---
-from presto.cost.curobo_cost import CuroboCost # Import the actual cost function
-from presto.data.franka_util import franka_fk # <<< ADD THIS IMPORT
+# Assuming logger utils are available
+try:
+    from presto.util.wandb_logger import WandbLogger
+except ImportError:
+    print("Warning: WandbLogger not found. Logging will be printed to console.")
+    WandbLogger = None
 
-# --- Define GIGA-style Loss Functions ---
-# Adapted from GIGA/scripts/train_giga.py (lines 158-177)
+import types
+
+# --- Helper Function ---
+def dict_to_namespace(d):
+    """Recursively converts a dictionary to SimpleNamespace."""
+    if isinstance(d, dict):
+        for key, value in d.items():
+            d[key] = dict_to_namespace(value)
+        return types.SimpleNamespace(**d)
+    elif isinstance(d, list):
+        return [dict_to_namespace(item) for item in d]
+    else:
+        return d
+
+# --- GIGA Loss Helper Functions ---
 def _qual_loss_fn(pred, target):
-    # pred is already sigmoid-ed in PrestoGIGA.forward_grasp
-    # Use BCE loss directly
-    return F.binary_cross_entropy(pred, target, reduction="none")
+    # Ensure target is float for BCE
+    return F.binary_cross_entropy(pred, target.float(), reduction="none")
 
 def _rot_loss_fn(pred, target):
-    # pred is already normalized in PrestoGIGA.forward_grasp
-    # Assumes target[:, 0] and target[:, 1] are the two symmetric quaternions
-    # If target is just [B, M, 4], adjust accordingly
-    if target.shape[-1] == 4 and len(target.shape) == 3: # Shape [B, M, 4]
-         # Simple dot product loss if only one target rotation provided
-         return 1.0 - torch.abs(torch.sum(pred * target, dim=-1))
-    elif target.shape[-1] == 4 and len(target.shape) == 4 and target.shape[-2] == 2: # Shape [B, M, 2, 4]
-        loss0 = _quat_loss_fn(pred, target[..., 0, :])
-        loss1 = _quat_loss_fn(pred, target[..., 1, :])
-        return torch.min(loss0, loss1)
-    else:
-        raise ValueError(f"Unsupported target rotation shape: {target.shape}")
-
+    # Target shape: [B, M, 4] (assuming single GT from dummy data)
+    return _quat_loss_fn(pred, target) # Directly compute loss
 
 def _quat_loss_fn(pred, target):
-    # Ensure inputs are normalized (prediction should be already)
-    pred_norm = F.normalize(pred, dim=-1)
-    target_norm = F.normalize(target, dim=-1)
+    # pred/target shape: [B, M, 4]
+    # Ensure normalization for safety, although model output should be normalized
+    pred_norm = F.normalize(pred, p=2, dim=-1)
+    target_norm = F.normalize(target, p=2, dim=-1)
+    # Return 1 - |dot product|, shape [B, M]
     return 1.0 - torch.abs(torch.sum(pred_norm * target_norm, dim=-1))
 
-def _width_loss_fn(pred, target, scale=40.0):
-    # Simple MSE loss, potentially scaled
-    return F.mse_loss(scale * pred, scale * target, reduction="none")
+def _width_loss_fn(pred, target):
+    # Scale width prediction/target before MSE as in GIGA
+    # Shape: [B, M]
+    return F.mse_loss(40 * pred, 40 * target, reduction="none")
 
-# --- Configuration Dataclasses ---
+def _tsdf_loss_fn(pred, target):
+    # Using BCE for occupancy/TSDF prediction, ensure target is float
+    # pred/target shape: [B, N_tsdf]
+    return F.binary_cross_entropy(pred, target.float(), reduction="none")
 
-@dataclass
-class TrainConfig:
-    learning_rate: float = 3e-4
-    weight_decay: float = 1e-2
-    lr_warmup_steps: int = 500
-    lr_schedule: str = 'cos'
-    num_epochs: int = 512
-    batch_size: int = 64 # Adjust as needed
-    save_epoch: int = 10
-    use_amp: Optional[bool] = None
+def train_loop(
+    log_dir: str,
+    model: nn.Module,
+    sched: SchedulerMixin,
+    optimizer: th.optim.Optimizer,
+    lr_scheduler, # Add type hint if available
+    scaler: th.cuda.amp.GradScaler, # Or torch.amp.GradScaler
+    writer, # Add type hint if available (e.g., WandbLogger or None)
+    cost, # Add type hint if available (e.g., CuroboCost or None)
+    normalizer, # Add type hint if available (e.g., Normalize)
+    fk_fn, # Add type hint if available (e.g., Callable)
+    device: str,
+    # --- Hyperparameters ---
+    num_epochs: int,
+    batch_size: int,
+    use_amp: bool,
+    diffusion_coef: float,
+    grasp_coef: float,
+    tsdf_coef: float,
+    collision_coef: float,
+    distance_coef: float,
+    euclidean_coef: float,
+    reweight_loss_by_coll: bool,
+    x0_type: str,
+    x0_iter: int,
+    cost_margin: float, # Assuming cost object has margin internally if needed
+    log_by: str, # 'epoch' or 'step'
+    step_max: Optional[int],
+    save_epoch: int,
+    # --- Dummy Data Params ---
+    seq_len: int,
+    obs_dim: int,
+    cond_dim: int,
+    tsdf_dim: int,
+    num_grasp_points: int,
+    num_tsdf_points: int,
+    # Add any other parameters train_loop might need from train() call
+):
+    """
+    Main training loop for the combined PrestoGIGA model using dummy data.
+    """
+    global_step = 0
+    start_time = time.time()
 
-    # Loss coefficients
-    diffusion_coef: float = 1.0
-    grasp_coef: float = 1.0 # Overall coefficient for the combined GIGA loss
-    tsdf_coef: float = 0.0 # Set > 0 if training TSDF prediction
-    # --- Added PRESTO Aux Loss Coefs ---
-    collision_coef: float = 0.0 # Set > 0 to enable
-    distance_coef: float = 0.0  # Set > 0 to enable
-    euclidean_coef: float = 0.0 # Set > 0 to enable
+    # Determine max diffusion steps
+    diff_step_max: int = sched.config.num_train_timesteps
+    if step_max is not None:
+        diff_step_max = step_max
 
-    # --- Added PRESTO Reweighting/x0 Config ---
-    reweight_loss_by_coll: bool = False # Set True to enable
-    x0_type: str = 'step' # 'step' or 'iter'
-    x0_iter: int = 1 # Number of iterations for x0_type='iter'
-
-    log_by: str = 'epoch'
-    step_max: Optional[int] = None # Max diffusion timestep
-
-# --- ADD PrestoGIGAConfig definition here ---
-@dataclass
-class PrestoGIGAConfig:
-    """Configuration for the combined PrestoGIGA model."""
-    # Fields copied from PrestoGIGA.Config in presto/network/combined.py
-    input_size: int = 1000  # Note: PRESTO's DiT usually uses obs_dim here, adjust if needed
-    patch_size: int = 20
-    in_channels: int = 7  # Will be overridden by dummy data dim in test
-    hidden_size: int = 256
-    num_layer: int = 4
-    num_heads: int = 16
-    mlp_ratio: float = 4.0
-    class_dropout_prob: float = 0.0
-    cond_dim: int = 104 # Will be overridden by dummy data dim in test
-    learn_sigma: bool = True
-    use_cond: bool = True
-    use_pos_emb: bool = False
-    dim_pos_emb: int = 3 * 2 * 32
-    sin_emb_x: int = 0
-    cat_emb_x: bool = False
-    use_cond_token: bool = False
-    use_cloud: bool = False # GIGA specific, might not be used in combined
-
-    grid_size: int = 40 # Will be overridden by dummy data dim in test
-    c_dim: int = 32 # Feature dimension from TSDF encoder/feature extractor
-    use_grasp: bool = True # Enable grasp prediction heads
-    use_tsdf: bool = True # Enable TSDF prediction head
-
-    decoder_type: str = 'simple_fc' # GIGA decoder type
-    decoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-        'hidden_size': 32,
-        'n_blocks': 5,
-        'leaky': False,
-    })
-    padding: float = 0.1 # GIGA decoder padding
-
-    use_amp: Optional[bool] = None # Inherited, might not be needed directly here
-    use_joint_embeddings: bool = True # Combine diffusion + TSDF features
-
-    encoder_type: Optional[str] = 'voxel_simple_local' # GIGA TSDF encoder type
-    encoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-        'plane_type': ['xz', 'xy', 'yz'],
-        'plane_resolution': 40, # Should match grid_size?
-        'unet': True,
-        'unet_kwargs': {
-            'depth': 3,
-            'merge_mode': 'concat',
-            'start_filts': 32
-        }
-    })
-    # Add any other fields specific to PrestoGIGA if needed
-
-
-@dataclass
-class MetaConfig:
-    project: str = 'prestogiga'
-    task: str = 'joint_train'
-    group: Optional[str] = None
-    run_id: Optional[str] = None
-    resume: bool = False
-
-@dataclass
-class Config:
-    meta: MetaConfig = MetaConfig()
-    path: RunPath.Config = RunPath.Config(root='/tmp/prestogiga')
-    train: TrainConfig = field(default_factory=TrainConfig)
-    diffusion: DiffusionConfig = field(default_factory=DiffusionConfig)
-    # Embed PrestoGIGA's config directly
-    model: PrestoGIGAConfig = field(default_factory=PrestoGIGAConfig)
-    data: DataConfig = field(default_factory=DataConfig) # Assumes DataConfig is suitable for combined data
-    device: str = 'cuda:0'
-    cfg_file: Optional[str] = None
-    load_ckpt: Optional[str] = None
-    use_wandb: bool = True
-    cost: CuroboCost.Config = field(default_factory=CuroboCost.Config) # Add CuroboCost config field
-    seed: int = 0
-    resume: Optional[str] = None
-    # Add any other top-level configs needed (e.g., dataset config)
-    dataset: Dict[str, Any] = field(default_factory=dict) # Example dataset config field
-
-# --- Utility Functions ---
-
-def _map_device(x, device):
-    """ Recursively map tensors in a dict/list/tuple to a device. """
-    if isinstance(x, dict):
-        return {k: _map_device(v, device) for (k, v) in x.items()}
-    elif isinstance(x, (list, tuple)):
-        return type(x)(_map_device(item, device) for item in x)
-    elif isinstance(x, th.Tensor):
-        return x.to(device=device)
-    return x
-
-# Assume a collate function exists that handles the combined batch structure
-# It should pad tensors appropriately if needed.
-def combined_collate_fn(batch_list):
-    # This is a placeholder - implementation depends heavily on the Dataset structure
-    # It needs to handle all keys: 'trajectory', 'env-label', 'tsdf',
-    # 'grasp_query_points', 'grasp_qual_labels', etc.
-    # Use torch.utils.data.default_collate where possible, handle others manually.
-    elem = batch_list[0]
-    return {key: th.utils.data.default_collate([d[key] for d in batch_list])
-            if isinstance(elem[key], th.Tensor) else
-            [d[key] for d in batch_list] # Or custom stacking/padding
-            for key in elem}
-
-
-# --- GIGA-style Loss Functions ---
-# (Keep the existing _qual_loss_fn, _rot_loss_fn, _quat_loss_fn, _width_loss_fn)
-
-# --- Helper for x0 Prediction (Adapted from PRESTO/presto/scripts/train.py logic) ---
-def predict_x0_from_model_out(model: PrestoGIGA, noisy_trajs, steps, label, diffusion_preds, sched: SchedulerMixin, cfg: Config):
-    """ Predicts x0 based on model output and scheduler type. """
-    if cfg.train.x0_type == 'step':
-        # Assumes `diffusion_preds` is epsilon if scheduler predicts noise, or x0 if scheduler predicts x0
-        if sched.config.prediction_type == "epsilon":
-            # Use the utility function from presto.diffusion.util
-            pred_traj_ds = pred_x0(sched, steps, diffusion_preds, noisy_trajs)
-        elif sched.config.prediction_type == "sample":
-             pred_traj_ds = diffusion_preds # Model directly predicts x0
-        else:
-             raise ValueError(f"Unsupported prediction type: {sched.config.prediction_type}")
-    elif cfg.train.x0_type == 'iter':
-        # Implementation based on PRESTO/presto/scripts/train.py lines 271-287
-        pred_traj_ds = noisy_trajs
-        if isinstance(sched, DDIMScheduler):
-            # Calculate intermediate timesteps for iterative refinement
-            # Ensure steps is a tensor on the correct device
-            steps_tensor = steps if isinstance(steps, th.Tensor) else th.tensor([steps] * noisy_trajs.shape[0], device=noisy_trajs.device)
-
-            # Create linspace for each item in the batch
-            t_i_list = [th.linspace(0, s.item(), cfg.train.x0_iter + 1).long().flip(dims=(0,))[:-1].to(noisy_trajs.device)
-                        for s in steps_tensor]
-
-            # Iterate cfg.train.x0_iter times
-            for i in range(cfg.train.x0_iter):
-                intermediate_t = th.stack([t[i] for t in t_i_list]) # Get the i-th timestep for each batch item
-
-                # Re-predict noise/x0 at the intermediate step using only the diffusion part
-                with th.no_grad(): # No need for gradients during iterative refinement
-                    intermediate_results = model.forward(
-                        sample=pred_traj_ds,
-                        timestep=intermediate_t,
-                        class_labels=label,
-                        mode="diffusion", # Only need diffusion output here
-                        return_dict=True
-                    )
-                intermediate_preds = intermediate_results["sample"] # Noise or x0
-
-                # Perform DDIM step to refine the trajectory prediction
-                # Note: DDIMScheduler.step expects model_output (noise or x0), timestep, sample
-                pred_traj_ds = sched.step(intermediate_preds, intermediate_t, pred_traj_ds).prev_sample
-        else:
-             raise ValueError(f'Iterative x0 prediction requires DDIMScheduler, got {type(sched)}')
-    else:
-        raise ValueError(f"Unsupported x0_type: {cfg.train.x0_type}")
-    return pred_traj_ds
-
-# --- Training Loop ---
-def train_loop(cfg: Config,
-               path: RunPath,
-               dataset, # Assume this is your combined dataset instance
-               model: PrestoGIGA,
-               sched: SchedulerMixin,
-               optimizer: th.optim.Optimizer,
-               lr_scheduler: Optional[th.optim.lr_scheduler._LRScheduler],
-               scaler: th.cuda.amp.GradScaler,
-               writer: Optional[WandbLogger], # Use WandbLogger or Any
-               # --- Added arguments ---
-               cost: Optional[Any] = None, # Placeholder for CuroboCost or similar
-               normalizer: Optional[Any] = None, # Placeholder for Normalize object
-               fk_fn: Optional[callable] = None): # Placeholder for forward kinematics function
-
-    device = cfg.device
-    loader = th.utils.data.DataLoader(
-        dataset,
-        batch_size=cfg.train.batch_size,
-        shuffle=True,
-        num_workers=8, # Adjust as needed
-        pin_memory=True,
-        # collate_fn=combined_collate_fn # Use your custom collate if needed
-    )
-
-    # Check if auxiliary PRESTO costs or reweighting are needed
-    # This determines if we need the unnormalized trajectory and 'none' reduction
-    need_traj_for_aux_cost = (
-        cfg.train.collision_coef > 0
-        or cfg.train.distance_coef > 0
-        or cfg.train.reweight_loss_by_coll # Check the reweight flag too
-        or cfg.train.euclidean_coef > 0
-    )
-    # Ensure necessary components are provided if aux costs/reweighting are enabled
-    if need_traj_for_aux_cost:
-        if cost is None:
-            raise ValueError("`cost` object must be provided when auxiliary costs or reweighting are enabled.")
-        if normalizer is None:
-             raise ValueError("`normalizer` object must be provided when auxiliary costs or reweighting are enabled.")
-        if cfg.train.euclidean_coef > 0 and fk_fn is None:
-             raise ValueError("`fk_fn` must be provided when euclidean_coef > 0.")
-        if cfg.train.reweight_loss_by_coll and not hasattr(cost, 'cfg') or not hasattr(cost.cfg, 'margin'):
-             print("Warning: `cost.cfg.margin` not found, needed for reweighting. Using default margin 0.0.")
-             # Or raise ValueError("`cost.cfg.margin` must be defined for reweighting.")
-
+    # Precompute iterative diffusion steps if needed
+    substepss = None
+    if x0_type == 'iter':
+        # Cache all possible substeps shorter than `num_train_timesteps`.
+        # Note: Using sched.config.num_train_timesteps here, adjust if needed
+        substepss_list = [
+            th.round(
+                th.arange(i, 0, -i / x0_iter, device=device)).long()
+            for i in range(1, sched.config.num_train_timesteps + 1)]
+        # Pad shorter sequences to the length of the longest (x0_iter)
+        max_len = x0_iter
+        padded_substepss = [F.pad(s, (0, max_len - len(s))) for s in substepss_list]
+        substepss = th.stack(padded_substepss, dim=0).to(
+            device=device,
+            dtype=th.long).sub_(1).clamp_(min=0) # Subtract 1 for 0-based indexing, clamp
 
     ic("Starting training loop...")
-    global_step = 0
-    try:
-        diff_step_max: int = sched.config.num_train_timesteps
-        if cfg.train.step_max is not None:
-            diff_step_max = min(diff_step_max, cfg.train.step_max)
 
-        for epoch in tqdm(range(cfg.train.num_epochs), desc=f"Epochs ({path.dir.name})"):
-            # Running averages for logging
-            loss_total_ra = []
-            loss_ddpm_ra = []
-            loss_coll_ra = []
-            loss_dist_ra = []
-            loss_eucd_ra = []
-            loss_grasp_qual_ra = []
-            loss_grasp_rot_ra = []
-            loss_grasp_width_ra = []
-            loss_grasp_comb_ra = [] # GIGA-style combined grasp loss
-            loss_tsdf_ra = []
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_total_loss = 0.0
+        epoch_diffusion_loss = 0.0
+        epoch_grasp_loss = 0.0
+        epoch_tsdf_loss = 0.0
+        epoch_collision_loss = 0.0
+        epoch_distance_loss = 0.0
+        epoch_euclidean_loss = 0.0
 
-            model.train() # Ensure model is in training mode
+        # === Placeholder for data loading ===
+        # Simulate a dataset size for progress bar
+        dummy_dataset_size = 100 # Example: Simulate 100 datapoints
+        num_batches = math.ceil(dummy_dataset_size / batch_size)
+        # ===================================
 
-            for batch in tqdm(loader, desc=f"Epoch {epoch}", leave=False):
-                optimizer.zero_grad()
+        progress_bar = tqdm(range(num_batches), desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
 
-                # --- 1. Prepare Batch Data ---
-                batch = _map_device(batch, device=device)
-                # PRESTO expects trajectory as [B, S, C], then swaps internally if needed
-                # Let's assume dataset provides [B, S, C] or adjust here
-                # If dataset provides [B, C, S] like DummyDataset:
-                # true_traj = batch['trajectory'].swapaxes(-1, -2) # [B, S, C]
-                # If dataset provides [B, S, C] directly:
-                true_traj = batch['trajectory'] # [B, S, C] Ground truth trajectory (unnormalized)
+        for batch_idx in progress_bar:
+            optimizer.zero_grad()
 
-                # Normalize trajectory for diffusion input/target
-                # Ensure normalizer is on the correct device
-                if normalizer is None:
-                     raise ValueError("Normalizer must be provided")
-                current_normalizer = normalizer.to(device)
-                true_traj_ds = current_normalizer(true_traj) # [B, S, C] Normalized
+            # === Generate Dummy Batch ===
+            batch_list = [generate_dummy_datapoint(seq_len, obs_dim, cond_dim, tsdf_dim, num_grasp_points, num_tsdf_points) for _ in range(batch_size)]
+            batch = create_batch_from_datapoints(batch_list, device)
+            # ===========================
 
-                # Swap axes for DiT input: [B, C, S]
-                true_traj_ds_dit = true_traj_ds.swapaxes(-1, -2)
+            # Extract ground truth data from batch
+            true_action_ds = batch['trajectory'] # Shape: [B, Seq, Obs] - Use 'trajectory' key
+            cond_data = batch['env-label']   # Shape: [B, Cond]
+            tsdf_grid = batch['tsdf']        # Shape: [B, 1, D, D, D]
+            grasp_query_points = batch['grasp_query_points'] # Shape: [B, N_grasp, 3]
+            tsdf_query_points = batch['tsdf_query_points']   # Shape: [B, N_tsdf, 3]
 
-                env_label = batch['env-label']        # [B, D_cond] Diffusion condition
-                tsdf_input = batch['tsdf']            # [B, 1, G, G, G] Grasp condition
-                grasp_query_points = batch['grasp_query_points'] # [B, M, 3] Grasp query
-                grasp_qual_labels = batch['grasp_qual_labels']   # [B, M, 1] Grasp targets
-                grasp_rot_labels = batch['grasp_rot_labels']     # [B, M, 4] or [B, M, 2, 4]
-                grasp_width_labels = batch['grasp_width_labels'] # [B, M, 1]
-                # Optional data
-                col_label = batch.get('col-label') or batch.get('prim-label') # For PRESTO aux costs
-                tsdf_query_points = batch.get('tsdf_query_points') # For TSDF prediction
-                tsdf_labels = batch.get('tsdf_labels') # For TSDF prediction
+            # Ground truth for GIGA/TSDF parts
+            gt_grasp_label = batch['grasp_qual_labels'] # Shape: [B, N_grasp, 1] -> Squeeze later if needed
+            gt_grasp_rot = batch['grasp_rot_labels']    # Shape: [B, N_grasp, 4] -> Adjust loss fn if needed for 2 candidates
+            gt_grasp_width = batch['grasp_width_labels']# Shape: [B, N_grasp, 1] -> Squeeze later if needed
+            gt_tsdf_value = batch['tsdf_labels']        # Shape: [B, N_tsdf, 1] -> Squeeze later if needed
 
-                # --- 2. Diffusion Noise Setup (PRESTO Style) ---
-                steps = th.randint(
-                    0, diff_step_max, (true_traj_ds_dit.shape[0],), device=device
-                ).long()
-                noise = th.randn(true_traj_ds_dit.shape, device=device) # Noise shape matches DiT input [B, C, S]
-                noisy_trajs = sched.add_noise(true_traj_ds_dit, noise, steps)
 
-                # --- 3. Model Forward Pass (Joint) ---
-                # Use AMP context manager for forward pass
-                with th.cuda.amp.autocast(enabled=cfg.train.use_amp):
-                    results = model.forward(
-                        sample=noisy_trajs,            # Diffusion input [B, C, S]
-                        timestep=steps,                # Diffusion timestep
-                        class_labels=env_label,        # Diffusion condition
-                        tsdf=tsdf_input,               # Grasp condition
-                        p=grasp_query_points,          # Grasp query points
-                        p_tsdf=tsdf_query_points,      # Optional: TSDF query points
-                        mode="joint",                  # Ensure joint mode
-                        return_dict=True
-                    )
-                    diffusion_preds = results.get("sample") # Noise or x0 prediction [B, C, S]
-                    grasp_qual_preds = results.get("qual")  # [B, M, 1]
-                    grasp_rot_preds = results.get("rot")    # [B, M, 4]
-                    grasp_width_preds = results.get("width")# [B, M, 1]
-                    tsdf_preds = results.get("tsdf")        # Optional [B, N_tsdf, 1]
+            # --- Diffusion Process ---
+            steps = th.randint(
+                0, diff_step_max,
+                (batch_size,), device=device
+            ).long()
+            noise = th.randn(true_action_ds.shape, device=device)
+            noisy_actions = sched.add_noise(true_action_ds, noise, steps)
 
-                    # --- 4. Calculate Diffusion Loss (including PRESTO aux structure) ---
-                    loss_ddpm_raw = th.tensor(0.0, device=device)
-                    loss_coll = th.tensor(0.0, device=device) # PRESTO Aux
-                    loss_dist = th.tensor(0.0, device=device) # PRESTO Aux
-                    loss_eucd = th.tensor(0.0, device=device) # PRESTO Aux
-                    final_loss_ddpm = th.tensor(0.0, device=device) # After reweighting/aux
+            # --- Model Forward Pass ---
+            with th.cuda.amp.autocast(enabled=use_amp):
+                model_output = model(
+                    sample=noisy_actions,
+                    timestep=steps,
+                    class_labels=cond_data,
+                    tsdf=tsdf_grid,
+                    p=grasp_query_points,
+                    p_tsdf=tsdf_query_points,
+                    mode="joint",
+                    return_dict=True # Ensure we get a dictionary back
+                )
 
-                    if cfg.train.diffusion_coef > 0 and diffusion_preds is not None:
-                        # Determine reduction based on PRESTO logic
-                        reduction = 'none' if need_traj_for_aux_cost else 'mean'
+                # Extract predictions
+                pred_noise_or_x0 = model_output['sample']  # NOT 'diffusion'
+                pred_grasp_qual = model_output['qual']     # NOT 'grasp_qual'
+                pred_grasp_rot = model_output['rot']       # NOT 'grasp_rot'
+                pred_grasp_width = model_output['width']   # NOT 'grasp_width'
+                pred_tsdf = model_output.get('tsdf')  
 
-                        # Calculate base diffusion loss (expects target [B, C, S])
-                        loss_ddpm_raw = diffusion_loss(
-                            sched=sched,
-                            noise=noise,
-                            model_output=diffusion_preds,
-                            target=true_traj_ds_dit, # Use normalized target for diffusion loss
-                            steps=steps,
-                            reduction=reduction # Use conditional reduction
-                        ) # Shape [B] if reduction='none', scalar if 'mean'
+                # --- Loss Calculation ---
+                total_loss = 0.0
+                loss_dict = {}
 
-                        # Predict x0 (trajectory) from model output
-                        # Output shape: [B, C, S]
-                        pred_traj_ds = predict_x0_from_model_out(
-                            model, noisy_trajs, steps, env_label, diffusion_preds, sched, cfg
-                        )
+                # 1. Diffusion Loss (PRESTO)
+                loss_ddpm = diffusion_loss(
+                    pred_noise_or_x0, true_action_ds,
+                    noise, noisy_actions, steps,
+                    sched=sched,
+                    reduction=('none' if reweight_loss_by_coll else 'mean')
+                )
+                # Note: Reweighting requires calculating collision cost first
 
-                        # --- PRESTO Auxiliary Costs & Reweighting ---
-                        if need_traj_for_aux_cost:
-                            # Unnormalize predicted trajectory for physical costs
-                            # Swap axes back to [B, S, C] for cost functions
-                            u_pred_sd = current_normalizer.unnormalize(pred_traj_ds.swapaxes(-1, -2))
+                # Initialize auxiliary losses
+                loss_coll = th.zeros_like(loss_ddpm.mean())
+                loss_dist = th.zeros_like(loss_ddpm.mean())
+                loss_eucd = th.zeros_like(loss_ddpm.mean())
+                pred_traj_ds = None # Predicted trajectory at t=0
 
-                            # Calculate SDF using CuroboCost
-                            # cost() likely calls forward_collision_cost which handles reset internally if c is passed
-                            # It expects q shape [B, S, C] and c shape [B, D_cond]
-                            sdf = cost(u_pred_sd, col_label) # Shape [B, S] or similar depending on cost impl.
-
-                            # Calculate auxiliary costs based on SDF (Signed Distance Field)
-                            # Mimicking PRESTO train.py logic (lines 330-336)
-                            cost_margin = cfg.cost.margin # Get margin from cost config
-
-                            if cfg.train.collision_coef > 0 or cfg.train.reweight_loss_by_coll:
-                                # Collision loss: Penalize negative SDF (penetration) up to margin
-                                loss_coll = F.relu(cost_margin - sdf)
-                                # Reduce loss_coll (e.g., mean over sequence and batch)
-                                # PRESTO train.py seems to reduce later during reweighting or final aggregation
-                                # Let's keep it per-batch for reweighting: mean over sequence length
-                                if loss_coll.ndim > 1:
-                                     loss_coll = loss_coll.mean(dim=1) # Shape [B]
-
-                            if cfg.train.distance_coef > 0:
-                                # Distance loss: Penalize positive SDF (distance)
-                                loss_dist = F.relu(sdf)
-                                # Reduce loss_dist (e.g., mean over sequence and batch)
-                                # Keep per-batch: mean over sequence length
-                                if loss_dist.ndim > 1:
-                                     loss_dist = loss_dist.mean(dim=1) # Shape [B]
-
-                            if cfg.train.euclidean_coef > 0:
-                                # Calculate Euclidean loss in workspace (requires FK)
-                                # Assumes fk_fn takes [B, S, C] -> [B, S, 3] (e.g., EEF position)
-                                pred_xyz = fk_fn(u_pred_sd)
-                                true_xyz = fk_fn(true_traj) # Use original unnormalized trajectory
-                                loss_eucd = th.linalg.norm(pred_xyz - true_xyz, dim=-1).mean() # Mean over points and batch
-
-                            # Reweight diffusion loss by collision (PRESTO logic)
-                            if cfg.train.reweight_loss_by_coll:
-                                # Ensure loss_ddpm_raw is per-batch element [B]
-                                if reduction != 'none':
-                                     raise RuntimeError("Diffusion loss reduction must be 'none' for reweighting.")
-                                # Ensure loss_coll is per-batch element [B]
-                                if loss_coll.ndim == 1: # Check if loss_coll is per-batch [B]
-                                     # Original PRESTO weight: 1.0 + cost(u_pred_sd, col) / cost.cfg.margin
-                                     # cost() here returns SDF, not the raw cost value used in original weight formula.
-                                     # Let's use an exponential weight based on collision loss (distance below margin)
-                                     # weight = th.exp(-loss_coll / cost_margin).detach() + 1e-2 # Alternative weighting
-                                     # OR try to replicate original logic more closely if cost returns appropriate value
-                                     # For now, using the exponential weight based on derived collision loss:
-                                     coll_weight = th.exp(-loss_coll / cost_margin).detach() + 1e-2 # Shape [B]
-                                     final_loss_ddpm = (loss_ddpm_raw * coll_weight).mean() # Apply weight and reduce
-                                else: # If coll_loss is not per-batch, cannot reweight per sample
-                                     print(f"Warning: Collision loss has unexpected shape {loss_coll.shape}, cannot reweight per sample. Using raw diffusion loss mean.")
-                                     final_loss_ddpm = loss_ddpm_raw.mean()
-                            else:
-                                # If no reweighting, just take the mean if reduction was 'none'
-                                final_loss_ddpm = loss_ddpm_raw.mean() if reduction == 'none' else loss_ddpm_raw
-
+                # Calculate predicted trajectory x0 if needed for aux losses or reweighting
+                needs_traj = collision_coef > 0 or distance_coef > 0 or euclidean_coef > 0 or reweight_loss_by_coll
+                if needs_traj:
+                    if x0_type == 'step':
+                        pred_traj_ds = pred_x0(sched, steps, pred_noise_or_x0, noisy_actions)
+                    elif x0_type == 'iter':
+                        # Iterative refinement to get x0
+                        pred_traj_ds = noisy_actions
+                        if isinstance(sched, DDIMScheduler) and substepss is not None:
+                             # Ensure substeps indices are valid for the current steps
+                            current_substeps = substepss[steps] # Shape [B, x0_iter]
+                            for i in range(x0_iter):
+                                iter_steps = current_substeps[..., i]
+                                # Need to re-run the diffusion part of the model for intermediate steps
+                                iter_preds = model(x=pred_traj_ds, timestep=iter_steps, cond=cond_data, mode="diffusion")['diffusion']
+                                # Use scheduler step function
+                                step_output = sched.step(
+                                     iter_preds, iter_steps[0].item(), pred_traj_ds # Assuming step takes single timestep value
+                                     # Pass other necessary args for sched.step if any
+                                 )
+                                pred_traj_ds = step_output.prev_sample
                         else:
-                            # If no aux costs/reweighting, final loss is just the raw (mean) loss
-                            final_loss_ddpm = loss_ddpm_raw
+                             print(f"Warning: x0_type='iter' requires DDIMScheduler and precomputed substeps. Falling back to single step prediction.")
+                             pred_traj_ds = pred_x0(sched, steps, pred_noise_or_x0, noisy_actions)
+                    else: # 'legacy' or other unsupported
+                         raise ValueError(f"Unsupported x0_type: {x0_type}")
 
-                    # --- 5. Calculate Grasp Losses (Exact GIGA Style) ---
-                    combined_grasp_loss = th.tensor(0.0, device=device)
-                    # For logging individual components (mean over all points)
-                    log_loss_qual = th.tensor(0.0, device=device)
-                    log_loss_rot = th.tensor(0.0, device=device)
-                    log_loss_width = th.tensor(0.0, device=device)
+                    # Unnormalize predicted trajectory for cost functions
+                    # Assuming normalizer has 'unnormalize' method and works on shape [B, Seq, Obs]
+                    u_pred_sd = normalizer.unnormalize(pred_traj_ds.swapaxes(-1, -2)) # Shape [B, Seq, Obs]
 
-                    if cfg.train.grasp_coef > 0 and \
-                       grasp_qual_preds is not None and grasp_rot_preds is not None and grasp_width_preds is not None:
-
-                        # Calculate per-point losses (reduction='none')
-                        # Shapes: [B, M, 1], [B, M], [B, M, 1]
-                        loss_qual_raw = _qual_loss_fn(grasp_qual_preds, grasp_qual_labels)
-                        loss_rot_raw = _rot_loss_fn(grasp_rot_preds, grasp_rot_labels)
-                        loss_width_raw = _width_loss_fn(grasp_width_preds, grasp_width_labels)
-
-                        # --- Exact GIGA Loss Combination (per point) ---
-                        # Reference: GIGA/scripts/train_giga.py line 168
-                        # Reference: GIGA/scripts/train_vgn.py line 165
-                        # Ensure label is broadcastable: [B, M, 1]
-                        label_mask = grasp_qual_labels.detach() # Use detached label for masking
-
-                        # Combine per-point losses using label mask and hardcoded width coef (0.01)
-                        # loss_rot_raw and loss_width_raw need squeezing if they have trailing dim 1
-                        loss_per_point = loss_qual_raw + label_mask * (
-                            loss_rot_raw.unsqueeze(-1) + 0.01 * loss_width_raw
-                        ) # Shape [B, M, 1]
-
-                        # Final GIGA loss for backprop: mean over all points (B * M)
-                        combined_grasp_loss = loss_per_point.mean()
-
-                        # Calculate individual means *only* for logging purposes
-                        with th.no_grad():
-                             log_loss_qual = loss_qual_raw.mean()
-                             # Mask rotation/width loss before averaging for logging consistency
-                             log_loss_rot = (label_mask * loss_rot_raw.unsqueeze(-1)).mean()
-                             log_loss_width = (label_mask * loss_width_raw).mean()
+                    # 2. Collision Loss (PRESTO Aux)
+                    if collision_coef > 0 and cost is not None:
+                        # Assuming cost function takes [B, Seq, Obs] and condition dict
+                        # The dummy batch needs a 'col_label' field compatible with the cost function
+                        col_label = batch.get('col_label', None) # Get collision geometry info if available
+                        if col_label is not None:
+                             loss_coll = cost(u_pred_sd, col_label).mean()
+                        else:
+                             print("Warning: Collision coefficient > 0 but no 'col_label' found in dummy batch for cost function.")
+                        total_loss += collision_coef * loss_coll
+                        loss_dict['collision_loss'] = loss_coll.item()
+                        epoch_collision_loss += loss_coll.item()
 
 
-                    # --- 6. Calculate Optional TSDF Loss ---
-                    loss_tsdf = th.tensor(0.0, device=device)
-                    if cfg.train.tsdf_coef > 0 and tsdf_preds is not None and tsdf_labels is not None:
-                        # Assuming binary classification task for TSDF occupancy (like GIGA)
-                        # Model output is logits, labels are target probabilities (0 or 1)
-                        # GIGA's _occ_loss_fn uses BCEWithLogitsLoss
-                        loss_tsdf = F.binary_cross_entropy_with_logits(tsdf_preds, tsdf_labels, reduction='mean')
+                    # 3. Distance Loss (PRESTO Aux)
+                    if distance_coef > 0:
+                        loss_dist = F.mse_loss(u_pred_sd[:, 1:, :], u_pred_sd[:, :-1, :])
+                        total_loss += distance_coef * loss_dist
+                        loss_dict['distance_loss'] = loss_dist.item()
+                        epoch_distance_loss += loss_dist.item()
 
-                    # --- 7. Combine Losses ---
-                    # Ensure aux losses are reduced before combining if they weren't already
-                    final_loss_coll = loss_coll.mean() if isinstance(loss_coll, th.Tensor) and loss_coll.ndim > 0 else loss_coll
-                    final_loss_dist = loss_dist.mean() if isinstance(loss_dist, th.Tensor) and loss_dist.ndim > 0 else loss_dist
-                    final_loss_eucd = loss_eucd # Already reduced
-
-                    total_loss = (cfg.train.diffusion_coef * final_loss_ddpm +
-                                  cfg.train.collision_coef * final_loss_coll + # Use reduced aux loss
-                                  cfg.train.distance_coef * final_loss_dist + # Use reduced aux loss
-                                  cfg.train.euclidean_coef * final_loss_eucd + # Use reduced aux loss
-                                  cfg.train.grasp_coef * combined_grasp_loss + # Use combined GIGA loss
-                                  cfg.train.tsdf_coef * loss_tsdf) # TSDF loss already reduced
-
-                # --- 8. Gradient Step & LR Schedule ---
-                # Use standard AMP gradient scaling
-                scaler.scale(total_loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-
-                if lr_scheduler is not None:
-                    lr_scheduler.step()
-                global_step += 1
+                    # 4. Euclidean Loss (PRESTO Aux)
+                    if euclidean_coef > 0 and fk_fn is not None:
+                         x_pred_sd = fk_fn(u_pred_sd) # FK on predicted joints [B, Seq, Task]
+                         with th.no_grad():
+                             # Unnormalize ground truth action (already swapped)
+                             u_true_sd = normalizer.unnormalize(batch['trajectory'].swapaxes(-1, -2))
+                             x_true_sd = fk_fn(u_true_sd) # FK on true joints
+                         loss_eucd = F.mse_loss(x_pred_sd, x_true_sd)
+                         total_loss += euclidean_coef * loss_eucd
+                         loss_dict['euclidean_loss'] = loss_eucd.item()
+                         epoch_euclidean_loss += loss_eucd.item()
 
 
-                # --- 9. Log Losses ---
-                loss_total_ra.append(total_loss.item())
-                loss_ddpm_ra.append(final_loss_ddpm.item()) # Log the final (potentially reweighted) diffusion loss
-                loss_coll_ra.append(loss_coll.item())
-                loss_dist_ra.append(loss_dist.item())
-                loss_eucd_ra.append(loss_eucd.item())
-                # Log individual grasp components (averaged over all points)
-                loss_grasp_qual_ra.append(log_loss_qual.item())
-                loss_grasp_rot_ra.append(log_loss_rot.item())
-                loss_grasp_width_ra.append(log_loss_width.item())
-                loss_grasp_comb_ra.append(combined_grasp_loss.item()) # Log the combined GIGA loss used for backprop
-                loss_tsdf_ra.append(loss_tsdf.item())
+                # Apply Diffusion Reweighting if enabled
+                if reweight_loss_by_coll:
+                     if cost is not None and u_pred_sd is not None:
+                         with th.no_grad():
+                             col_label = batch.get('col_label', None)
+                             if col_label is not None:
+                                 # Calculate collision cost per trajectory point/batch element
+                                 coll_cost_per_element = cost(u_pred_sd, col_label) # Shape [B] or [B, Seq]? Assume [B] for now
+                                 # Simple weighting: increase weight for higher cost (more collision)
+                                 # Normalize cost, add 1, potentially clamp? Cost function details matter here.
+                                 # Example: weight = 1.0 + torch.clamp(coll_cost_per_element / cost_margin, 0, 5) # Clamp max weight
+                                 # This needs careful tuning based on cost function output range
+                                 weight = 1.0 + coll_cost_per_element # Simplified weighting
+                                 weight = weight / weight.mean() # Normalize weights per batch
+                                 # Reshape weight to match loss_ddpm if it's per-element [B, Obs, Seq]
+                                 if len(loss_ddpm.shape) > 1:
+                                     weight = weight.view(-1, *([1]*(len(loss_ddpm.shape)-1)))
 
-            # --- End of Epoch Logging & Checkpointing ---
-            if writer is not None:
-                 log_data = {
-                     'epoch': epoch,
-                     'lr': optimizer.param_groups[0]['lr'],
-                     'loss/total': np.mean(loss_total_ra),
-                     'loss/diffusion': np.mean(loss_ddpm_ra),
-                     'loss/collision': np.mean(loss_coll_ra),
-                     'loss/distance': np.mean(loss_dist_ra),
-                     'loss/euclidean': np.mean(loss_eucd_ra),
-                     'loss/grasp_quality': np.mean(loss_grasp_qual_ra), # Logged individual mean
-                     'loss/grasp_rotation': np.mean(loss_grasp_rot_ra), # Logged individual mean (masked)
-                     'loss/grasp_width': np.mean(loss_grasp_width_ra),  # Logged individual mean (masked)
-                     'loss/grasp_combined': np.mean(loss_grasp_comb_ra),# Logged combined GIGA loss
-                     'loss/tsdf': np.mean(loss_tsdf_ra),
-                 }
-                 writer.log(log_data, step=global_step if cfg.train.log_by == 'step' else epoch)
+                                 loss_ddpm = (loss_ddpm * weight).mean() # Apply weight and take mean
+                             else:
+                                 print("Warning: Reweighting enabled but no 'col_label' for cost function.")
+                                 loss_ddpm = loss_ddpm.mean() # Fallback to simple mean
+                     else:
+                         print("Warning: Reweighting enabled but cost function or predicted trajectory unavailable.")
+                         loss_ddpm = loss_ddpm.mean() # Fallback to simple mean
+                else:
+                     loss_ddpm = loss_ddpm.mean() # Simple mean if not reweighting
 
-            # Save checkpoint
-            if (epoch + 1) % cfg.train.save_epoch == 0:
-                # Include normalizer state if it exists and has state_dict or similar
-                normalizer_state = None
-                if normalizer is not None:
-                     if hasattr(normalizer, 'state_dict'):
-                         normalizer_state = normalizer.state_dict()
-                     elif hasattr(normalizer, 'mean') and hasattr(normalizer, 'std'):
-                         # Basic saving for mean/std normalizer
-                         normalizer_state = {'mean': normalizer.mean, 'std': normalizer.std}
+                total_loss += diffusion_coef * loss_ddpm
+                loss_dict['diffusion_loss'] = loss_ddpm.item()
+                epoch_diffusion_loss += loss_ddpm.item()
 
-                save_ckpt(path=path,
-                          model=model,
-                          optim=optimizer,
-                          sched=lr_scheduler,
-                          scaler=scaler,
-                          cfg=cfg,
-                          step=epoch, # Save epoch number
-                          global_step=global_step, # Save global step too
-                          normalizer=normalizer_state) # Save normalizer state
 
-    except KeyboardInterrupt:
-        print('Graceful exit')
-    finally:
-        # Save final checkpoint
-        normalizer_state = None
-        if normalizer is not None:
-             if hasattr(normalizer, 'state_dict'):
-                 normalizer_state = normalizer.state_dict()
-             elif hasattr(normalizer, 'mean') and hasattr(normalizer, 'std'):
-                 normalizer_state = {'mean': normalizer.mean, 'std': normalizer.std}
+                # 5. Grasp Quality Loss (GIGA) - BCE loss
+                loss_qual = _qual_loss_fn(pred_grasp_qual, gt_grasp_label.squeeze(-1)).mean() # Mean over points and batch
+                total_loss += grasp_coef * loss_qual
+                loss_dict['grasp_qual_loss'] = loss_qual.item()
 
-        save_ckpt(path=path,
-                  model=model,
-                  optim=optimizer,
-                  sched=lr_scheduler,
-                  scaler=scaler,
-                  cfg=cfg,
-                  step=epoch if 'epoch' in locals() else -1, # Handle early exit
-                  global_step=global_step,
-                  normalizer=normalizer_state,
-                  final=True)
+                # 6. Grasp Rotation Loss (GIGA) - Min quaternion distance loss
+                loss_rot = _rot_loss_fn(pred_grasp_rot, gt_grasp_rot).mean() # Mean over points and batch
+                total_loss += grasp_coef * loss_rot # Use same grasp_coef
+                loss_dict['grasp_rot_loss'] = loss_rot.item()
+
+                # 7. Grasp Width Loss (GIGA) - Scaled MSE loss
+                loss_width = _width_loss_fn(pred_grasp_width, gt_grasp_width.squeeze(-1)).mean() # Mean over points and batch
+                total_loss += grasp_coef * 0.01 * loss_width # Use GIGA's 0.01 scaling relative to grasp_coef
+                loss_dict['grasp_width_loss'] = loss_width.item()
+
+                # Aggregate grasp losses for logging
+                current_grasp_loss = loss_qual + loss_rot + 0.01 * loss_width
+                epoch_grasp_loss += current_grasp_loss.item() # Log combined grasp loss metric
+
+                # 8. TSDF Prediction Loss (GIGA/Combined) - BCE loss
+                if tsdf_coef > 0:
+                    loss_tsdf = _tsdf_loss_fn(pred_tsdf, gt_tsdf_value.squeeze(-1)).mean() # Mean over points and batch
+                    total_loss += tsdf_coef * loss_tsdf
+                    loss_dict['tsdf_loss'] = loss_tsdf.item()
+                    epoch_tsdf_loss += loss_tsdf.item()
+
+
+            # --- Backward Pass & Optimization Step ---
+            scaler.scale(total_loss).backward()
+            # Optional: Gradient clipping
+            # scaler.unscale_(optimizer)
+            # th.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            scaler.step(optimizer)
+            scaler.update()
+
+            if lr_scheduler is not None:
+                lr_scheduler.step()
+
+            epoch_total_loss += total_loss.item()
+            global_step += 1
+
+            # --- Logging ---
+            log_data = {
+                'train/total_loss': total_loss.item(),
+                'train/lr': optimizer.param_groups[0]['lr'],
+                'train/epoch': epoch,
+                'train/global_step': global_step,
+            }
+            # Add individual losses to log
+            log_data.update({f'train/{k}': v for k, v in loss_dict.items()})
+
+            if writer is not None and log_by == 'step':
+                 writer.log(log_data, step=global_step)
+
+            progress_bar.set_postfix(loss=total_loss.item())
+
+
+        # --- End of Epoch ---
+        avg_epoch_loss = epoch_total_loss / num_batches
+        ic(f"Epoch {epoch+1} finished. Avg Total Loss: {avg_epoch_loss:.4f}")
+
+        # Log epoch averages
         if writer is not None:
-            writer.finish()
+             epoch_log_data = {
+                 'train/epoch_avg_total_loss': avg_epoch_loss,
+                 'train/epoch_avg_diffusion_loss': epoch_diffusion_loss / num_batches,
+                 'train/epoch_avg_grasp_loss': epoch_grasp_loss / num_batches, # Combined grasp loss
+                 'train/epoch_avg_tsdf_loss': epoch_tsdf_loss / num_batches if tsdf_coef > 0 else 0,
+                 'train/epoch_avg_collision_loss': epoch_collision_loss / num_batches if collision_coef > 0 else 0,
+                 'train/epoch_avg_distance_loss': epoch_distance_loss / num_batches if distance_coef > 0 else 0,
+                 'train/epoch_avg_euclidean_loss': epoch_euclidean_loss / num_batches if euclidean_coef > 0 else 0,
+                 'epoch': epoch + 1 # Log epoch number itself
+             }
+             # Log at the end of the epoch, using global_step as the step counter
+             writer.log(epoch_log_data, step=global_step)
 
-    return model # Return trained model
 
+        # --- Save Checkpoint ---
+        if (epoch + 1) % save_epoch == 0 or (epoch + 1) == num_epochs:
+            ckpt_path = os.path.join(log_dir, f"ckpt_epoch_{epoch+1}.pth")
+            save_data = {
+                'epoch': epoch,
+                'global_step': global_step,
+                'model': model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scaler': scaler.state_dict(),
+                # Save normalizer state if it's not identity/None
+                'normalizer': normalizer.state_dict() if hasattr(normalizer, 'state_dict') else \
+                              ({'mean': normalizer.mean, 'std': normalizer.std} if normalizer else None),
+            }
+            if lr_scheduler is not None:
+                save_data['lr_scheduler'] = lr_scheduler.state_dict()
 
-# --- Placeholder Imports (Ensure these are available in your environment) ---
-# from curobo.wrap.reacher.cost import CuroboCost # Example Cost function
-# from presto.data.normalize import Normalize # Example Normalizer
-# from presto.data.franka_util import franka_fk # Example FK function
+            save_ckpt(save_data, ckpt_path)
+            ic(f"Checkpoint saved to {ckpt_path}")
 
-# --- Dummy Implementations (Replace with actual imports/logic) ---
-# class DummyCost: # Replace with actual CuroboCost or similar
-#     def __init__(self): self.cfg = OmegaConf.create({'margin': 0.05}) # Example margin
-#     def coll_loss(self, traj, label): return th.rand(traj.shape[0], device=traj.device) * 0.1 # Return per-batch loss
-#     def dist_loss(self, traj, label): return th.rand(traj.shape[0], device=traj.device) * 0.01 # Return per-batch loss
+    # --- End of Training ---
+    end_time = time.time()
+    ic(f"Training finished in {(end_time - start_time)/60:.2f} minutes.")
+    if writer is not None:
+        writer.finish()
 
-# --- (Keep Normalize if still needed as placeholder, otherwise delete) ---
-class Normalize: # Replace with actual import
-    def __init__(self, mean, std): self.mean=mean; self.std=std
-    def to(self, device): self.mean=self.mean.to(device); self.std=self.std.to(device); return self
-    def __call__(self, x): return (x - self.mean) / self.std
-    def unnormalize(self, x): return x * self.std + self.mean
-    @staticmethod
-    def from_minmax(min_val, max_val):
-        mean = (min_val + max_val) / 2.0
-        std = (max_val - min_val) / 2.0
-        std[std == 0] = 1.0 # Avoid division by zero
-        return Normalize(mean, std)
-    @staticmethod
-    def identity(dim, device='cpu'): return Normalize(th.zeros(dim, device=device), th.ones(dim, device=device))
+# --- Main Training Function (No Hydra/Config) ---
+def train(
+    log_dir_base: str = "runs/combined_train_standalone",
+    use_wandb: bool = False,
+    wandb_project: str = "presto_giga_combined",
+    wandb_entity: Optional[str] = None, # Set your wandb entity here
+    # --- Key Hyperparameters ---
+    num_epochs: int = 50,
+    batch_size: int = 4,
+    learning_rate: float = 3e-4,
+    weight_decay: float = 1e-2,
+    lr_warmup_steps: int = 100, # Reduced for shorter dummy training
+    lr_schedule: str = 'cos', # 'cos' or None
+    save_epoch: int = 10,
+    log_by: str = 'epoch', # <-- ADD THIS PARAMETER (default to 'epoch')
+    # --- Loss Coefficients ---
+    diffusion_coef: float = 1.0,
+    grasp_coef: float = 1.0, # GIGA combined loss coef
+    tsdf_coef: float = 0.5,  # TSDF prediction loss coef
+    collision_coef: float = 0.5, # PRESTO aux collision loss coef
+    distance_coef: float = 0.5,  # PRESTO aux distance loss coef
+    euclidean_coef: float = 0.5, # PRESTO aux euclidean loss coef
+    reweight_loss_by_coll: bool = True, # PRESTO reweighting flag
+    # --- Diffusion Settings ---
+    beta_schedule='squaredcos_cap_v2',
+    beta_start=0.0001,
+    beta_end=0.02,
+    num_train_timesteps=1000,
+    prediction_type='epsilon', # 'epsilon' or 'sample'
+    x0_type: str = 'step', # 'step' or 'iter'
+    x0_iter: int = 1,
+    step_max: Optional[int] = None, # Max diffusion timestep to use
+    # --- Model Dimensions (from dummy data) ---
+    seq_len: int = 50,
+    obs_dim: int = 7,      # Franka joints
+    cond_dim: int = 104,   # Example condition dim
+    tsdf_dim: int = 32,    # TSDF grid size
+    num_grasp_points: int = 64, # Num grasp queries
+    num_tsdf_points: int = 32,  # Num TSDF queries
+    # --- Model Architecture Params (Example for PrestoGIGA) ---
+    model_depth: int = 12,
+    model_num_heads: int = 6,
+    model_hidden_size: int = 384,
+    model_patch_size: int = 1, # For 1D DiT
+    giga_encoder: str = 'voxel_simple_local', # Example GIGA encoder
+    giga_decoder: str = 'simple_local', # Example GIGA decoder
+    giga_c_dim: int = 32, # GIGA feature dimension
+    # --- Hardware ---
+    device_str: str = "auto", # "auto", "cuda", "cpu"
+    use_amp: bool = True, # Automatic Mixed Precision
+    # --- Checkpointing ---
+    load_checkpoint_path: Optional[str] = None, # Path to load checkpoint from
+    # --- Cost Function Params (if CuroboCost is used) ---
+    cost_margin: float = 0.1, # Example margin for collision cost
+    # Add other cost-related params if needed
+):
+    """
+    Sets up and runs the training loop with hardcoded parameters.
+    """
+    # --- Device Setup ---
+    if device_str == "auto":
+        device = "cuda" if th.cuda.is_available() else "cpu"
+    else:
+        device = device_str
+    ic(f"Using device: {device}")
 
-def train(cfg: Config):
-    device: str = cfg.device
-    path = RunPath(cfg.path)
-    path.dump_cfg(cfg) # Save config
+    # --- Path Setup ---
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir = os.path.join(log_dir_base, timestamp)
+    os.makedirs(log_dir, exist_ok=True)
+    ic(f"Logging to: {log_dir}")
 
     # --- Logger ---
     writer = None
-    if cfg.use_wandb:
-        # Make sure WandbLogger is correctly imported
-        # from presto.util.wandb_logger import WandbLogger
-        writer = WandbLogger(
-            project=cfg.meta.project,
-            entity=None, # Set your wandb entity
-            group=cfg.meta.group,
-            run_id=cfg.meta.run_id,
-            mode=None,
-            cfg=OmegaConf.to_container(cfg, resolve=True)
-        )
-    ic("Logging to", path.dir)
+    if use_wandb and WandbLogger is not None:
+        try:
+            writer = WandbLogger(
+                project=wandb_project,
+                entity=wandb_entity,
+                # group=None, # Optional: group runs
+                run_id=None, # Optional: resume run
+                mode=None,
+                # Pass key hyperparameters to wandb config
+                cfg={
+                    'learning_rate': learning_rate, 'batch_size': batch_size,
+                    'num_epochs': num_epochs, 'diffusion_coef': diffusion_coef,
+                    'grasp_coef': grasp_coef, 'tsdf_coef': tsdf_coef,
+                    'collision_coef': collision_coef, 'distance_coef': distance_coef,
+                    'euclidean_coef': euclidean_coef, 'obs_dim': obs_dim,
+                    'cond_dim': cond_dim, 'tsdf_dim': tsdf_dim,
+                    'model_depth': model_depth, 'model_hidden_size': model_hidden_size,
+                    'beta_schedule': beta_schedule, 'prediction_type': prediction_type,
+                 }
+            )
+            ic("Using WandbLogger.")
+        except Exception as e:
+            print(f"Failed to initialize WandbLogger: {e}. Logging disabled.")
+            writer = None
+    else:
+        ic("Wandb logging disabled.")
 
-    # --- !!! TESTING WITH DUMMY DATA !!! ---
-    print("--- GENERATING DUMMY DATA FOR TESTING ---")
-    # Define dimensions consistent with your config or reasonable defaults
-    test_seq_len = 50
-    test_obs_dim = 7 # From Franka
-    test_cond_dim = 104 # Example
-    test_tsdf_dim = 32 # Example
-    test_num_grasp_points = 64 # Example
-    test_num_tsdf_points = 32 # Example
-
-    # Create a single data point
-    single_dummy_dp = generate_dummy_datapoint(
-        seq_len=test_seq_len,
-        obs_dim=test_obs_dim,
-        cond_dim=test_cond_dim,
-        tsdf_dim=test_tsdf_dim,
-        num_grasp_points=test_num_grasp_points,
-        num_tsdf_points=test_num_tsdf_points,
-        device=device # Create directly on target device
-    )
-
-    # Create a small batch (e.g., batch size 4)
-    batch_size_for_test = 4
-    dummy_batch_list = [generate_dummy_datapoint(
-                            seq_len=test_seq_len, obs_dim=test_obs_dim, cond_dim=test_cond_dim,
-                            tsdf_dim=test_tsdf_dim, num_grasp_points=test_num_grasp_points,
-                            num_tsdf_points=test_num_tsdf_points, device='cpu' # Generate on CPU first
-                        ) for _ in range(batch_size_for_test)]
-    dummy_batch = create_batch_from_datapoints(dummy_batch_list, device=device)
-    print(f"--- Generated dummy batch with size {batch_size_for_test} ---")
-    # You can inspect the shapes here:
-    # for key, value in dummy_batch.items():
-    #     print(f"Batch key '{key}' shape: {value.shape}")
-    # --- END TESTING WITH DUMMY DATA ---
-
-
-    # --- Dataset & Normalizer ---
-    # Replace DummyDataset with your actual implementation when ready
-    # train_dataset = YourActualCombinedDataset(...)
-    # print("WARNING: Using DummyDataset. Replace with actual combined dataset loader.")
-    # Use dummy dimensions for placeholder normalizer if needed
-    # obs_dim_from_dummy = test_obs_dim
 
     # --- Normalizer ---
-    # Initialize normalizer based on dummy data dimensions for testing
-    normalizer = None
-    # ... (rest of normalizer logic, potentially using test_obs_dim) ...
-    if normalizer is None:
-        print("Warning: No normalizer found or loaded. Using identity normalizer for testing.")
-        normalizer = Normalize.identity(dim=test_obs_dim, device=device) # Use dummy dim
-    else:
-        normalizer = normalizer.to(device)
-
+    # Using identity normalizer for dummy data, replace if using real data stats
+    normalizer = Normalize.identity(dim=obs_dim, device=device)
+    ic("Using identity normalizer.")
 
     # --- Cost Function ---
-    # Instantiate CuroboCost using the config
     cost = None
-    if cfg.train.collision_coef > 0 or cfg.train.distance_coef > 0 or cfg.train.reweight_loss_by_coll:
+    from presto.cost.curobo_cost import CuroboCost
+    from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
+    if CuroboCost is not None and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
          ic("Instantiating CuroboCost...")
-         cost = CuroboCost(cfg=cfg.cost,
-                           batch_size=batch_size_for_test, # Use test batch size
-                           device=device)
-         ic("CuroboCost instantiated.")
+         # Use default CuroboCost config for simplicity
+         from presto.cost.curobo_cost import CuroboCost # Ensure import
+         try:
+             cost_config = CuroboCost.Config() # Use default config
+             cost = CuroboCost(cfg=cost_config, batch_size=batch_size, device=device)
+             ic(f"CuroboCost instantiated with margin: {cost_margin}")
+         except Exception as e:
+             print(f"Failed to instantiate CuroboCost: {e}. Disabling related losses.")
+             cost = None
+             collision_coef = 0.0
+             distance_coef = 0.0
+             reweight_loss_by_coll = False
+    else:
+        ic("CuroboCost not needed or not available.")
 
 
     # --- Forward Kinematics ---
-    fk_fn = franka_fk
-    ic("Using franka_fk function.")
+    current_fk_fn = None
+    if euclidean_coef > 0:
+        current_fk_fn = franka_fk # Use imported fk function
+        ic("Using franka_fk function for Euclidean loss.")
+    else:
+        ic("Euclidean loss disabled, FK function not needed.")
 
 
-    # --- Model & Scheduler ---
-    # Update model config based on dummy data specifics for testing
-    cfg.model.in_channels = test_obs_dim # Use dummy dim
-    # cfg.model.input_size = test_seq_len # DiT input_size is usually obs_dim (channels)
-    cfg.model.cond_dim = test_cond_dim # Use dummy dim
-    cfg.model.grid_size = test_tsdf_dim # Use dummy dim
+    # --- Model ---
+    ic("Instantiating PrestoGIGA model...")
+    # Define model config explicitly (can be a dict or ModelConfig dataclass)
+    # Example using a dictionary:
+    model_config = {
+         'in_channels': obs_dim,
+         'out_channels': obs_dim,
+         'input_size': obs_dim, # DiT input size is usually channels
+         'depth': model_depth,
+         'num_heads': model_num_heads,
+         'patch_size': model_patch_size, # For 1D data
+         'cond_dim': cond_dim,
+         'hidden_size': model_hidden_size,
+         'adaln_scale': 1.0,
+         'learn_sigma': False,
+         'use_cond': True,
+         'use_flash_attn': False, # Set based on availability/preference
+         # GIGA/ConvONet specific parts
+         'grid_size': tsdf_dim,
+         'encoder': giga_encoder,
+         'encoder_kwargs': {'plane_type': ['xz', 'xy', 'yz'], 'plane_resolution': 32, 'unet3d': False, 'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim}},
+         'decoder': giga_decoder,
+         'decoder_kwargs': {'sample_mode': 'bilinear', 'hidden_size': 32},
+         'c_dim': giga_c_dim, # Feature dim from GIGA encoder
+         'padding': 0.1,
+         'n_classes': 1, # For grasp quality
+         'num_layer': model_depth, # Assuming depth corresponds to num_layer
+         'mlp_ratio': 4.0, # Add default or pass as arg if needed
+         'class_dropout_prob': 0.0, # Add default
+         'use_pos_emb': False, # Add default
+         'dim_pos_emb': 3 * 2 * 32, # Add default or calculate
+         'sin_emb_x': 0, # Add default
+         'cat_emb_x': False, # Add default
+         'use_cond_token': False, # Add default
+         'use_cloud': False, # Add default
+         'use_grasp': True, # Add default
+         'use_tsdf': True, # Add default (assuming tsdf_coef > 0 implies this)
+         'decoder_type': giga_decoder, # Already present via giga_decoder
+         'use_joint_embeddings': True, # Add default
+         'encoder_type': giga_encoder, # Already present via giga_encoder
+    }
+    model_config_ns = dict_to_namespace(model_config) # Convert dict to namespace
+    model = PrestoGIGA(model_config_ns).to(device) # Pass namespace object
+    ic(f"Model instantiated with {sum(p.numel() for p in model.parameters())} parameters.")
 
-    model = PrestoGIGA(cfg.model).to(device)
-    sched = get_scheduler(cfg.diffusion)
-    ic(model)
-    ic(sched)
-    ic(f"Model Parameters: {count_parameters(model)}")
 
-    # --- Optimizer & LR Scheduler ---
+    # --- Scheduler ---
+    ic("Instantiating Diffusion Scheduler...")
+    # Define diffusion config explicitly (can be a dict or DiffusionConfig dataclass)
+    diffusion_config = {
+        'beta_schedule': beta_schedule,
+        'beta_start': beta_start,
+        'beta_end': beta_end,
+        'num_train_timesteps': num_train_timesteps,
+        'prediction_type': prediction_type,
+        # Add other relevant scheduler params if needed, e.g., for DDIM
+        'clip_sample': False, # Common DDIM parameter
+        'set_alpha_to_one': False, # Common DDIM parameter
+    }
+    # Use get_scheduler factory or instantiate directly, e.g., DDPMScheduler
+    # sched = get_scheduler(diffusion_config)
+    if prediction_type == 'epsilon':
+        sched = DDPMScheduler(
+            num_train_timesteps=diffusion_config['num_train_timesteps'],
+            beta_schedule=diffusion_config['beta_schedule'],
+            beta_start=diffusion_config['beta_start'],
+            beta_end=diffusion_config['beta_end'],
+            prediction_type=diffusion_config['prediction_type'],
+        )
+    else: # Example for 'sample' prediction type
+         sched = DDPMScheduler( # Adjust scheduler type if needed for 'sample'
+            num_train_timesteps=diffusion_config['num_train_timesteps'],
+            beta_schedule=diffusion_config['beta_schedule'],
+            beta_start=diffusion_config['beta_start'],
+            beta_end=diffusion_config['beta_end'],
+            prediction_type=diffusion_config['prediction_type'],
+        )
+    ic(f"Scheduler: {type(sched).__name__}")
+
+
+    # --- Optimizer ---
     optimizer = th.optim.AdamW(model.parameters(),
-                               lr=cfg.train.learning_rate,
-                               weight_decay=cfg.train.weight_decay)
-    # No LR scheduler needed for single step test usually
+                               lr=learning_rate,
+                               weight_decay=weight_decay)
+    ic(f"Optimizer: AdamW (LR={learning_rate}, WD={weight_decay})")
+
+
+    # --- LR Scheduler ---
+    lr_scheduler = None
+    if lr_schedule == 'cos':
+        # Calculate total steps based on dummy data setup (1 batch per epoch)
+        num_training_steps = num_epochs # Since we do 1 step per epoch
+        lr_scheduler = get_cosine_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=min(lr_warmup_steps, num_training_steps // 10), # Adjust warmup
+            num_training_steps=num_training_steps)
+        ic(f"LR Scheduler: Cosine with {lr_warmup_steps} warmup steps.")
+    else:
+        ic("LR Scheduler: None")
+
 
     # --- AMP Grad Scaler ---
-    scaler = th.cuda.amp.GradScaler(enabled=cfg.train.use_amp)
-
-    # --- !!! TEST SINGLE FORWARD/BACKWARD PASS !!! ---
-    print("--- TESTING SINGLE FORWARD/BACKWARD PASS ---")
-    model.train()
-    optimizer.zero_grad()
-
-    # Use the generated dummy batch
-    batch_for_test = dummy_batch
-
-    # --- Mimic start of train_loop ---
-    current_normalizer = normalizer # Use the initialized normalizer
-    true_traj = batch_for_test['trajectory'] # Shape [B, S, C]
-    # Normalize trajectory [B, S, C] -> [B, C, S] for diffusion model
-    norm_traj = current_normalizer(true_traj).swapaxes(-1, -2) # Shape [B, C, S]
-    env_label = batch_for_test['env-label']
-    col_label = batch_for_test['col-label']
-    tsdf_volume = batch_for_test.get('tsdf') # Use .get for optional keys
-    grasp_query = batch_for_test['grasp_query_points']
-    tsdf_query = batch_for_test.get('tsdf_query_points')
-
-    # Sample noise and timesteps
-    noise = th.randn_like(norm_traj)
-    steps = th.randint(0, sched.config.num_train_timesteps, (batch_for_test['trajectory'].shape[0],), device=device).long()
-    noisy_trajs = sched.add_noise(norm_traj, noise, steps)
-
-    # Forward pass
-    with th.cuda.amp.autocast(enabled=cfg.train.use_amp):
-        model_out = model(
-            sample=noisy_trajs,                 # [B, C, S]
-            timestep=steps,
-            cond_embed=env_label,               # [B, D_cond]
-            tsdf_volume=tsdf_volume,            # [B, 1, G, G, G]
-            grasp_query_points=grasp_query,     # [B, M, 3]
-            tsdf_query_points=tsdf_query,       # [B, N_tsdf, 3]
-            return_dict=True
-        )
-        # Extract outputs
-        diffusion_preds = model_out["sample"] # Noise or x0 prediction [B, C, S]
-        grasp_qual_preds = model_out.get("grasp_quality") # [B, M, 1] (sigmoid-ed)
-        grasp_rot_preds = model_out.get("grasp_rotation") # [B, M, 4] (normalized)
-        grasp_width_preds = model_out.get("grasp_width") # [B, M, 1]
-        tsdf_preds = model_out.get("tsdf_occupancy") # [B, N_tsdf, 1] (logits)
-
-        # --- Calculate Losses (Mimic train_loop logic) ---
-        # (Copy relevant loss calculation sections from train_loop here,
-        #  using batch_for_test['grasp_qual_labels'], etc. as targets)
-        # ... (diffusion_loss, aux costs, grasp loss, tsdf loss) ...
-        # Example placeholder:
-        total_loss = torch.tensor(0.0, device=device, requires_grad=True) # Replace with actual loss calc
-
-    # Backward pass
-    scaler.scale(total_loss).backward()
-    scaler.step(optimizer)
-    scaler.update()
-    print(f"--- Single pass completed. Loss: {total_loss.item()} ---")
-    # --- END SINGLE PASS TEST ---
+    amp_enabled = use_amp and (device == 'cuda')
+    scaler = th.cuda.amp.GradScaler(enabled=amp_enabled)
+    ic(f"AMP Enabled: {amp_enabled}")
 
 
-    # --- Load Checkpoint (if resuming - skip for initial test) ---
-    # ...
+    # --- Load Checkpoint (Optional) ---
+    start_epoch = 0
+    if load_checkpoint_path is not None and os.path.exists(load_checkpoint_path):
+        ic(f"Loading checkpoint from: {load_checkpoint_path}")
+        try:
+            checkpoint = th.load(load_checkpoint_path, map_location=device)
+            model.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            scaler.load_state_dict(checkpoint['scaler'])
+            if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
+                lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+            start_epoch = checkpoint.get('epoch', -1) + 1 # Resume from next epoch
+            global_step_loaded = checkpoint.get('global_step', 0)
+            # Load normalizer state if saved and normalizer exists
+            if 'normalizer' in checkpoint and normalizer is not None:
+                 if hasattr(normalizer, 'load_state_dict'):
+                     normalizer.load_state_dict(checkpoint['normalizer'])
+                 elif isinstance(checkpoint['normalizer'], dict) and 'mean' in checkpoint['normalizer']:
+                     normalizer.mean = checkpoint['normalizer']['mean'].to(device)
+                     normalizer.std = checkpoint['normalizer']['std'].to(device)
 
-    # --- Run Training Loop (Comment out for initial test) ---
-    # print("--- SKIPPING FULL TRAINING LOOP FOR INITIAL TEST ---")
-    # train_loop(cfg=cfg, path=path, dataset=train_dataset, ...)
+            ic(f"Resuming training from epoch {start_epoch}, global step {global_step_loaded}")
+            # Note: global_step in train_loop will restart from 0 unless passed in
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}. Starting training from scratch.")
+            start_epoch = 0
 
-    ic('Done with test setup.')
 
-# --- (Hydra entry point remains the same) ---
-@hydra_cli(config_path='../config', config_name='combined_train')
-def main(cfg: Config):
-    ic(OmegaConf.to_yaml(cfg))
-    train(cfg)
+    # --- Run Training Loop ---
+    train_loop(
+        log_dir=log_dir,
+        model=model,
+        sched=sched,
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        scaler=scaler,
+        writer=writer,
+        cost=cost,
+        normalizer=normalizer,
+        fk_fn=current_fk_fn,
+        device=device,
+        # Pass hyperparameters
+        num_epochs=num_epochs - start_epoch, # Adjust epochs remaining
+        batch_size=batch_size,
+        use_amp=amp_enabled,
+        diffusion_coef=diffusion_coef,
+        grasp_coef=grasp_coef,
+        tsdf_coef=tsdf_coef,
+        collision_coef=collision_coef,
+        distance_coef=distance_coef,
+        euclidean_coef=euclidean_coef,
+        reweight_loss_by_coll=reweight_loss_by_coll,
+        x0_type=x0_type,
+        x0_iter=x0_iter,
+        cost_margin=cost_margin,
+        log_by=log_by,
+        step_max=step_max,
+        save_epoch=save_epoch,
+        # Pass dummy data params
+        seq_len=seq_len,
+        obs_dim=obs_dim,
+        cond_dim=cond_dim,
+        tsdf_dim=tsdf_dim,
+        num_grasp_points=num_grasp_points,
+        num_tsdf_points=num_tsdf_points,
+    )
 
+
+# --- Main Execution ---
 if __name__ == '__main__':
-    main()
+    # --- Set parameters directly here ---
+    train(
+        log_dir_base="runs/combined_train_standalone_test",
+        use_wandb=False, # Set to True to enable WandB logging
+        # wandb_project="your_project_name",
+        # wandb_entity="your_entity_name",
+
+        num_epochs=20,   # Short run for testing
+        batch_size=8,    # Small batch size
+        learning_rate=1e-4,
+        save_epoch=5,
+
+        # Keep losses simple initially
+        diffusion_coef=1.0,
+        grasp_coef=0.5, # Example: Lower grasp weight
+        tsdf_coef=0.0,
+        collision_coef=0.0, # Disable aux losses for initial test
+        distance_coef=0.0,
+        euclidean_coef=0.0,
+        reweight_loss_by_coll=False,
+
+        # Model dimensions (match dummy data)
+        seq_len=50,
+        obs_dim=7,
+        cond_dim=104,
+        tsdf_dim=32,
+        num_grasp_points=64,
+        num_tsdf_points=32,
+
+        # Simplified model arch for faster testing
+        model_depth=6,
+        model_num_heads=4,
+        model_hidden_size=256,
+
+        device_str="auto", # Use GPU if available
+        use_amp=True,
+        # load_checkpoint_path=None # Set path to resume
+    )

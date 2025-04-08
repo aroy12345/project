@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from vgn.ConvONets.layers import ResnetBlockFC
+from presto.ConvONets.layers import ResnetBlockFC
 from torch_scatter import scatter_mean, scatter_max
-from vgn.ConvONets.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate, map2local
-from vgn.ConvONets.encoder.unet import UNet
-from vgn.ConvONets.encoder.unet3d import UNet3D
+from presto.ConvONets.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate, map2local
+from presto.ConvONets.encoder.unet import UNet
+from presto.ConvONets.encoder.unet3d import UNet3D
 
 
 class LocalPoolPointnet(nn.Module):

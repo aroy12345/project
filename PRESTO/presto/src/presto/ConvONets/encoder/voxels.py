@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_scatter import scatter_mean
-from vgn.ConvONets.encoder.unet import UNet
-from vgn.ConvONets.encoder.unet3d import UNet3D
-from vgn.ConvONets.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate
+from presto.ConvONets.encoder.unet import UNet
+from presto.ConvONets.encoder.unet3d import UNet3D
+from presto.ConvONets.common import coordinate2index, normalize_coordinate, normalize_3d_coordinate
 
 
 class LocalVoxelEncoder(nn.Module):

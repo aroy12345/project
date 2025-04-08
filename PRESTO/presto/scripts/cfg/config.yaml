@@ -1,0 +1,166 @@
+# Hydra Configuration for combined_train.py
+
+# --- Default Hydra Settings ---
+hydra:
+  run:
+    # Define output directory using interpolation from meta config
+    dir: ./outputs/${meta.project}/${now:%Y-%m-%d}/${now:%H-%M-%S}-${meta.task}
+  sweep:
+    dir: ./multirun/${meta.project}/${now:%Y-%m-%d}/${now:%H-%M-%S}-${meta.task}
+    subdir: ${hydra.job.num}
+  # Optional: Disable hydra's internal logging/output subdir like train_v2.yaml
+  # hydra_logging: disabled
+  # job_logging: disabled
+  # output_subdir: null
+
+# --- Top-Level Configuration (matches Config dataclass) ---
+
+# --- Meta Configuration (from MetaConfig dataclass) ---
+meta:
+  project: 'prestogiga_combined' # Adapted project name
+  task: 'joint_train'          # Default from dataclass
+  group: null                  # Default from dataclass
+  run_id: null                 # Default from dataclass
+  resume: false                # Default from dataclass
+
+# --- Path Configuration (from RunPath.Config) ---
+path:
+  root: '/tmp/prestogiga' # Default from dataclass
+  key_format: 'run-{:03d}' # Borrowed style from train_v2.yaml
+  key: null               # Borrowed style from train_v2.yaml
+
+# --- Training Parameters (from TrainConfig dataclass) ---
+train:
+  learning_rate: 3e-4
+  weight_decay: 1e-2
+  lr_warmup_steps: 500
+  lr_schedule: 'cos'
+  num_epochs: 512
+  batch_size: 64
+  save_epoch: 10
+  use_amp: null # Default null (script should auto-detect based on CUDA)
+
+  # Loss coefficients
+  diffusion_coef: 1.0
+  grasp_coef: 1.0
+  tsdf_coef: 0.0 # Set > 0 to enable TSDF loss
+  collision_coef: 0.0 # Set > 0 to enable PRESTO collision cost
+  distance_coef: 0.0  # Set > 0 to enable PRESTO distance cost
+  euclidean_coef: 0.0 # Set > 0 to enable PRESTO FK euclidean cost
+
+  # PRESTO Reweighting/x0 Config
+  reweight_loss_by_coll: false
+  x0_type: 'step' # 'step' or 'iter'
+  x0_iter: 1
+
+  log_by: 'epoch' # 'epoch' or 'step'
+  step_max: null # Optional: Max diffusion timestep (e.g., 1000)
+
+# --- Diffusion Scheduler Parameters (from DiffusionConfig dataclass) ---
+# Using values similar to train_v2.yaml and common defaults
+diffusion:
+  scheduler_type: 'ddim' # Corresponds to sched_type in train_v2
+  num_train_timesteps: 1000 # Common default, adjust as needed (train_v2 used 1024 iter)
+  beta_schedule: 'squaredcos_cap_v2' # Common default, adjust as needed (train_v2 used sqrt_cos)
+  prediction_type: 'epsilon' # Common default, adjust as needed (train_v2 used v_prediction)
+  # Optional params often seen (like train_v2.yaml):
+  # rescale_betas_zero_snr: true
+  # timestep_spacing: trailing
+  # beta_start: 0.0001
+  # beta_end: 0.02
+  # clip_sample: true
+  # Add any other fields required by your specific DiffusionConfig/get_scheduler
+
+# --- Model Parameters (from PrestoGIGAConfig dataclass) ---
+model:
+  # --- DiT Backbone Params ---
+  input_size: 1000 # Adjust if needed based on data
+  patch_size: 20
+  in_channels: 7 # NOTE: This will likely be overridden by the data loader based on actual data dim
+  hidden_size: 256
+  num_layer: 4
+  num_heads: 16
+  mlp_ratio: 4.0
+  class_dropout_prob: 0.0
+  cond_dim: 104 # NOTE: This will likely be overridden by the data loader based on actual data dim
+  learn_sigma: true
+  use_cond: true
+  use_pos_emb: false
+  dim_pos_emb: 192 # 3 * 2 * 32
+  sin_emb_x: 0
+  cat_emb_x: false
+  use_cond_token: false
+  use_cloud: false # GIGA specific, likely false for combined
+
+  # --- GIGA/ConvONet Params ---
+  grid_size: 40 # NOTE: Should match data preprocessing
+  c_dim: 32 # Feature dimension connecting components
+  use_grasp: true # Enable grasp prediction heads
+  use_tsdf: true # Enable TSDF prediction head (set train.tsdf_coef > 0 to train)
+
+  decoder_type: 'simple_fc' # GIGA decoder type
+  decoder_kwargs:
+    hidden_size: 32
+    n_blocks: 5
+    leaky: false
+  padding: 0.1 # GIGA decoder padding
+
+  use_joint_embeddings: true # Combine diffusion + TSDF features
+
+  encoder_type: 'voxel_simple_local' # GIGA TSDF encoder type
+  encoder_kwargs:
+    plane_type: ['xz', 'xy', 'yz']
+    plane_resolution: 40 # Should match grid_size
+    unet: true
+    unet_kwargs:
+      depth: 3
+      merge_mode: 'concat'
+      start_filts: 32
+
+# --- Data Parameters (from DataConfig dataclass) ---
+data:
+  # !!! Placeholder - Fill with actual DataConfig parameters for your combined dataset !!!
+  dataset_type: 'combined_dummy' # Example: change to your actual dataset type name
+  data_dir: '/path/to/your/combined/dataset' # Example: change path
+  obs_dim: ${model.in_channels} # Link to model config (will be overridden if model.in_channels is)
+  cond_dim: ${model.cond_dim} # Link to model config (will be overridden if model.cond_dim is)
+  sequence_length: 50 # Example: 100 - Set your trajectory length
+  # Add other necessary fields: normalization_type, frame_stack, specific keys for combined data, etc.
+  # --- GIGA specific data params (if needed by dataset) ---
+  grid_size: ${model.grid_size} # Link to model config
+  # --- PRESTO specific data params (if needed by dataset) ---
+  # e.g., from kcfg.yaml if relevant
+  # shelf:
+  #   prim_label: false
+  #   binarize: true
+
+# --- Cost Function Parameters (from CuroboCost.Config dataclass) ---
+cost:
+  # !!! Placeholder - Fill with actual CuroboCost.Config parameters !!!
+  # These are guesses based on typical Curobo usage
+  robot_urdf_path: ??? # e.g., '/path/to/franka_description/robots/franka_panda.urdf'
+  base_link: ??? # e.g., 'panda_link0'
+  eef_link: ??? # e.g., 'panda_link8'
+  self_collision_check: true
+  env_collision_check: true # If using environment collision
+  margin: 0.01 # Example margin - used in loss calculation if reweighting/aux costs enabled
+  tensor_args:
+    device: ${device} # Link to top-level device
+    dtype: 'float32' # Or 'float16' if using AMP heavily
+  # world_model: ??? # Config for environment collision geometry if needed
+  # cache_config: ??? # Config for caching if needed
+  # Add other CuroboCost.Config fields required by your setup
+
+# --- General Settings (Top-level in Config dataclass) ---
+device: 'cuda:0' # Or 'cuda', 'cpu'
+cfg_file: null # Typically unused when loading from primary config
+load_ckpt: null # Set path to a checkpoint directory to load from
+use_wandb: true # Enable/disable wandb logging
+seed: 0
+resume: null # Set path to a checkpoint directory to resume (alternative to load_ckpt)
+
+# --- Dataset Configuration (Example, adjust based on your DataConfig/factory) ---
+# This might be redundant if all params are within the 'data:' block above
+# dataset:
+#   name: 'my_combined_dataset'
+#   path: ${data.data_dir} # Example linking

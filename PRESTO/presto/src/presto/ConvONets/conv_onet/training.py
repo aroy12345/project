@@ -3,11 +3,11 @@ from tqdm import trange
 import torch
 from torch.nn import functional as F
 from torch import distributions as dist
-from vgn.ConvONets.common import (
+from presto.ConvONets.common import (
     compute_iou, make_3d_grid, add_key,
 )
-from vgn.ConvONets.utils import visualize as vis
-from vgn.ConvONets.training import BaseTrainer
+from presto.ConvONets.utils import visualize as vis
+from presto.ConvONets.training import BaseTrainer
 
 class Trainer(BaseTrainer):
     ''' Trainer object for the Occupancy Network.

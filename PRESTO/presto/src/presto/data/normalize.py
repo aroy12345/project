@@ -2,6 +2,7 @@
 
 import torch as th
 import torch.nn as nn
+from typing import Optional
 
 
 class Normalize(nn.Module):
@@ -13,12 +14,14 @@ class Normalize(nn.Module):
 
     def __init__(self,
                  center: th.Tensor,
-                 radius: th.Tensor):
+                 radius: th.Tensor,
+                 dim: Optional[int] = None):
         super().__init__()
         self.register_buffer('center',
                              center, persistent=True)
         self.register_buffer('radius',
                              radius, persistent=True)
+        self.dim = dim
 
     def normalize(self, x: th.Tensor,
                   inplace: bool = False):
@@ -80,7 +83,15 @@ class Normalize(nn.Module):
             raise ValueError(F'Unknown norm_type={norm_type}')
 
     @classmethod
-    def identity(cls, *args, **kwds):
+    def identity(cls, dim: Optional[int] = None, **kwds):
         """ Load parameters to skip normalization """
-        return cls(th.as_tensor(0.0, *args, **kwds),
-                   th.as_tensor(1.0, *args, **kwds))
+        # Separate dim from keywords meant for tensor creation
+        tensor_kwds = kwds.copy()
+
+        # Create mean=0 and std=1 tensors using valid keywords
+        mean = th.as_tensor(0.0, **tensor_kwds)
+        std = th.as_tensor(1.0, **tensor_kwds)
+
+        # Pass mean, std, and the separated dim to the constructor
+        # Assuming the constructor signature is like __init__(self, mean, std, dim=None)
+        return cls(mean, std, dim=dim)

@@ -3,7 +3,7 @@ import logging
 from torch.utils import data
 import numpy as np
 import yaml
-from vgn.ConvONets.common import decide_total_volume_range, update_reso
+from presto.ConvONets.common import decide_total_volume_range, update_reso
 
 
 logger = logging.getLogger(__name__)

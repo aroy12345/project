@@ -2,12 +2,12 @@ import torch
 import torch.distributions as dist
 from torch import nn
 import os
-from vgn.ConvONets.encoder import encoder_dict
-from vgn.ConvONets.conv_onet import models, training
-from vgn.ConvONets.conv_onet import generation
-from vgn.ConvONets import data
-from vgn.ConvONets import config
-from vgn.ConvONets.common import decide_total_volume_range, update_reso
+from presto.ConvONets.encoder import encoder_dict
+from presto.ConvONets.conv_onet import models, training
+from presto.ConvONets.conv_onet import generation
+from presto.ConvONets import data
+from presto.ConvONets import config
+from presto.ConvONets.common import decide_total_volume_range, update_reso
 from torchvision import transforms
 import numpy as np
 

@@ -1,7 +1,7 @@
 # import multiprocessing
 import torch
 try:
-    from vgn.ConvONets.utils.libkdtree import KDTree
+    from presto.ConvONets.utils.libkdtree import KDTree
 except:
     print('import libkdtree fail')
 import numpy as np
