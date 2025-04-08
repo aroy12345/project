@@ -1,0 +1,763 @@
+2025-04-08 17:49:46,324 - INFO - --- Logging Initialized ---
+
+2025-04-08 17:49:49,240 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,242 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,242 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,245 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,247 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,250 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,251 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,485 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,486 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,495 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,496 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,497 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,497 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,499 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,500 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,501 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,543 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,545 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,546 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,556 - INFO - USDParser failed to import, install curobo with pip install .[usd] or pip install usd-core, NOTE: Do not install this if using with Isaac Sim.
+2025-04-08 17:49:49,681 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,683 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,702 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-08 17:49:49,702 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-08 17:49:49,814 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,814 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,815 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,816 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,816 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,817 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,820 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-08 17:49:49,821 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,821 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,824 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,825 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,826 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,827 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,828 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,829 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,830 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,831 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,837 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,953 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,960 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,961 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:49,963 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,087 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,096 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,097 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,100 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,108 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,109 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,115 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,116 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,117 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,117 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,118 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,120 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,121 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,121 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,123 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,123 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,124 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,125 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,130 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,135 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,136 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,138 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,139 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,140 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,141 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,142 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,142 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,147 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,148 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,149 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,149 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,150 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,151 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,151 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,154 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,154 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,158 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,159 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,163 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,165 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,356 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,357 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,358 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-08 17:49:50,818 - INFO - Starting training loop with: epochs=20, batch_size=8
+2025-04-08 17:49:50,818 - INFO - Loss coefficients: diffusion=1.0, grasp=0.5, tsdf=0.0, collision=0.0, distance=0.0, euclidean=0.0
+2025-04-08 17:49:50,818 - INFO - Model settings: seq_len=50, obs_dim=7, cond_dim=104, tsdf_dim=32, num_grasp_points=64, num_tsdf_points=32
+2025-04-08 17:49:50,841 - INFO - 
+=== EPOCH 1/20 ===
+2025-04-08 17:49:50,842 - INFO - GPU Memory: 0.03GB allocated, 0.04GB reserved
+2025-04-08 17:49:50,846 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:50,854 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0409, 3.4438]
+2025-04-08 17:49:50,854 - INFO -   Condition shape: torch.Size([8, 104]), range: [-4.0624, 3.0865]
+2025-04-08 17:49:50,864 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:50,864 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:50,897 - INFO -   Diffusion: timestep range [29, 922], noise range [-3.9751, 3.5422]
+2025-04-08 17:49:50,897 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-3.8490, 3.4216]
+2025-04-08 17:49:51,406 - INFO -   Model output shapes:
+2025-04-08 17:49:51,406 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:51,409 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3762, 0.7007]
+2025-04-08 17:49:51,409 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3740
+2025-04-08 17:49:51,409 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.2329, 1.0283]
+2025-04-08 17:49:51,492 - INFO -   Loss components:
+2025-04-08 17:49:51,492 - INFO -     Diffusion loss: 3.207869 (coef: 1.0)
+2025-04-08 17:49:51,492 - INFO -     Grasp quality loss: 0.698263 (coef: 0.5)
+2025-04-08 17:49:51,492 - INFO -     Grasp rotation loss: 0.567467 (coef: 0.5)
+2025-04-08 17:49:51,492 - INFO -     Grasp width loss: 108.167084 (coef: 0.005)
+2025-04-08 17:49:51,492 - INFO -     TOTAL loss: 4.381570
+2025-04-08 17:49:51,498 - INFO -   Gradients: avg norm: inf, max norm: inf, non-zero params: 186
+2025-04-08 17:49:51,498 - INFO -   Optimizer step complete, current LR: 5.000000e-05
+2025-04-08 17:49:51,501 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:51,502 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3986, 3.2837]
+2025-04-08 17:49:51,502 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0337, 2.6775]
+2025-04-08 17:49:51,502 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,502 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,534 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:51,534 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2214, 3.3869]
+2025-04-08 17:49:51,534 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1230, 2.7821]
+2025-04-08 17:49:51,534 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,534 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,607 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:51,607 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0031, 3.3995]
+2025-04-08 17:49:51,607 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.8025, 3.2960]
+2025-04-08 17:49:51,607 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,607 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,642 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:51,642 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.9805, 3.8397]
+2025-04-08 17:49:51,642 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1880, 3.1179]
+2025-04-08 17:49:51,642 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,642 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,676 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:51,676 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.8846, 3.2973]
+2025-04-08 17:49:51,676 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0728, 3.1501]
+2025-04-08 17:49:51,676 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,676 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,709 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:51,709 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.9562, 4.2587]
+2025-04-08 17:49:51,709 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9593, 2.5762]
+2025-04-08 17:49:51,709 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,709 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,743 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:51,743 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7896, 4.4956]
+2025-04-08 17:49:51,743 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1603, 3.4997]
+2025-04-08 17:49:51,743 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,743 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,776 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:51,776 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.1993, 3.3850]
+2025-04-08 17:49:51,776 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6529, 3.5285]
+2025-04-08 17:49:51,777 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,777 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,811 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:51,811 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4312, 3.8622]
+2025-04-08 17:49:51,811 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.9532, 3.3461]
+2025-04-08 17:49:51,811 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,811 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,845 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:51,845 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5885, 3.5460]
+2025-04-08 17:49:51,845 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8553, 3.5451]
+2025-04-08 17:49:51,845 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,845 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,876 - INFO -   Loss components:
+2025-04-08 17:49:51,876 - INFO -     Diffusion loss: 3.102885 (coef: 1.0)
+2025-04-08 17:49:51,876 - INFO -     Grasp quality loss: 0.697269 (coef: 0.5)
+2025-04-08 17:49:51,876 - INFO -     Grasp rotation loss: 0.567459 (coef: 0.5)
+2025-04-08 17:49:51,877 - INFO -     Grasp width loss: 40.949387 (coef: 0.005)
+2025-04-08 17:49:51,877 - INFO -     TOTAL loss: 3.939996
+2025-04-08 17:49:51,882 - INFO -   Gradients: avg norm: 0.230495, max norm: 1.493605, non-zero params: 186
+2025-04-08 17:49:51,883 - INFO -   Optimizer step complete, current LR: 5.000000e-05
+2025-04-08 17:49:51,885 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:51,885 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.9444, 4.0929]
+2025-04-08 17:49:51,885 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1456, 2.9290]
+2025-04-08 17:49:51,885 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,885 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,919 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:51,919 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5467, 3.3546]
+2025-04-08 17:49:51,919 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2016, 3.0524]
+2025-04-08 17:49:51,919 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,919 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,977 - INFO - 
+=== Epoch 1 Summary ===
+2025-04-08 17:49:51,977 - INFO -   Avg total loss: 3.975734
+2025-04-08 17:49:51,977 - INFO -   Avg diffusion loss: 3.010654
+2025-04-08 17:49:51,977 - INFO -   Avg grasp loss: 1.930159
+2025-04-08 17:49:51,977 - INFO - 
+=== EPOCH 2/20 ===
+2025-04-08 17:49:51,978 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:51,981 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:51,981 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5071, 3.6390]
+2025-04-08 17:49:51,981 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9516, 3.5476]
+2025-04-08 17:49:51,981 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:51,981 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:51,981 - INFO -   Diffusion: timestep range [118, 570], noise range [-3.2785, 3.7878]
+2025-04-08 17:49:51,982 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-4.0373, 3.5773]
+2025-04-08 17:49:51,994 - INFO -   Model output shapes:
+2025-04-08 17:49:51,994 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:51,994 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3481, 0.6646]
+2025-04-08 17:49:51,994 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3538
+2025-04-08 17:49:51,994 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3704, 0.6465]
+2025-04-08 17:49:52,013 - INFO -   Loss components:
+2025-04-08 17:49:52,013 - INFO -     Diffusion loss: 2.877299 (coef: 1.0)
+2025-04-08 17:49:52,013 - INFO -     Grasp quality loss: 0.691609 (coef: 0.5)
+2025-04-08 17:49:52,013 - INFO -     Grasp rotation loss: 0.583071 (coef: 0.5)
+2025-04-08 17:49:52,014 - INFO -     Grasp width loss: 36.102402 (coef: 0.005)
+2025-04-08 17:49:52,014 - INFO -     TOTAL loss: 3.695151
+2025-04-08 17:49:52,019 - INFO -   Gradients: avg norm: 0.207360, max norm: 1.370933, non-zero params: 186
+2025-04-08 17:49:52,020 - INFO -   Optimizer step complete, current LR: 2.500000e-05
+2025-04-08 17:49:52,022 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:52,022 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7011, 3.5398]
+2025-04-08 17:49:52,022 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9930, 3.3418]
+2025-04-08 17:49:52,023 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,023 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,056 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:52,056 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.5350, 3.6378]
+2025-04-08 17:49:52,056 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.7351, 3.6349]
+2025-04-08 17:49:52,056 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,056 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,090 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:52,090 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4084, 3.6527]
+2025-04-08 17:49:52,090 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1506, 4.2578]
+2025-04-08 17:49:52,090 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,090 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,123 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:52,123 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.0632, 3.3070]
+2025-04-08 17:49:52,123 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9976, 3.3694]
+2025-04-08 17:49:52,124 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,124 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,158 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:52,158 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.1891, 3.1043]
+2025-04-08 17:49:52,159 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1860, 2.7574]
+2025-04-08 17:49:52,159 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,159 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,192 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:52,192 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.3090, 2.9394]
+2025-04-08 17:49:52,192 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.5647, 2.8930]
+2025-04-08 17:49:52,193 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,193 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,226 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:52,226 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2619, 3.8574]
+2025-04-08 17:49:52,227 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1659, 3.5201]
+2025-04-08 17:49:52,227 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,227 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,260 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:52,260 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4103, 3.9885]
+2025-04-08 17:49:52,260 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0348, 3.2101]
+2025-04-08 17:49:52,260 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,260 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,295 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:52,295 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7427, 3.4361]
+2025-04-08 17:49:52,295 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.6285, 4.1369]
+2025-04-08 17:49:52,295 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,295 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,330 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:52,330 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7886, 3.4195]
+2025-04-08 17:49:52,330 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3309, 2.8282]
+2025-04-08 17:49:52,330 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,330 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,361 - INFO -   Loss components:
+2025-04-08 17:49:52,361 - INFO -     Diffusion loss: 2.725032 (coef: 1.0)
+2025-04-08 17:49:52,361 - INFO -     Grasp quality loss: 0.694581 (coef: 0.5)
+2025-04-08 17:49:52,361 - INFO -     Grasp rotation loss: 0.582838 (coef: 0.5)
+2025-04-08 17:49:52,361 - INFO -     Grasp width loss: 37.380386 (coef: 0.005)
+2025-04-08 17:49:52,361 - INFO -     TOTAL loss: 3.550644
+2025-04-08 17:49:52,367 - INFO -   Gradients: avg norm: 0.215807, max norm: 1.384243, non-zero params: 186
+2025-04-08 17:49:52,367 - INFO -   Optimizer step complete, current LR: 1.169778e-05
+2025-04-08 17:49:52,370 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:52,370 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3213, 3.8120]
+2025-04-08 17:49:52,370 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2106, 2.5405]
+2025-04-08 17:49:52,370 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,370 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,404 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:52,404 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4264, 3.0712]
+2025-04-08 17:49:52,404 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.4760, 3.2080]
+2025-04-08 17:49:52,404 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,404 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,436 - INFO - 
+=== Epoch 2 Summary ===
+2025-04-08 17:49:52,436 - INFO -   Avg total loss: 3.677570
+2025-04-08 17:49:52,436 - INFO -   Avg diffusion loss: 2.845697
+2025-04-08 17:49:52,436 - INFO -   Avg grasp loss: 1.663746
+2025-04-08 17:49:52,436 - INFO - 
+=== EPOCH 3/20 ===
+2025-04-08 17:49:52,437 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:52,440 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:52,440 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5947, 2.9569]
+2025-04-08 17:49:52,440 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3340, 3.2341]
+2025-04-08 17:49:52,440 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,440 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,440 - INFO -   Diffusion: timestep range [296, 836], noise range [-3.8861, 3.4908]
+2025-04-08 17:49:52,440 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-4.4047, 3.7361]
+2025-04-08 17:49:52,452 - INFO -   Model output shapes:
+2025-04-08 17:49:52,452 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:52,453 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3821, 0.6880]
+2025-04-08 17:49:52,453 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3651
+2025-04-08 17:49:52,453 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3733, 0.6499]
+2025-04-08 17:49:52,471 - INFO -   Loss components:
+2025-04-08 17:49:52,471 - INFO -     Diffusion loss: 2.838197 (coef: 1.0)
+2025-04-08 17:49:52,471 - INFO -     Grasp quality loss: 0.698138 (coef: 0.5)
+2025-04-08 17:49:52,471 - INFO -     Grasp rotation loss: 0.571375 (coef: 0.5)
+2025-04-08 17:49:52,471 - INFO -     Grasp width loss: 34.572727 (coef: 0.005)
+2025-04-08 17:49:52,472 - INFO -     TOTAL loss: 3.645817
+2025-04-08 17:49:52,477 - INFO -   Gradients: avg norm: 0.238437, max norm: 1.551983, non-zero params: 186
+2025-04-08 17:49:52,477 - INFO -   Optimizer step complete, current LR: 3.289899e-05
+2025-04-08 17:49:52,480 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:52,480 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2650, 3.9183]
+2025-04-08 17:49:52,480 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.4445, 3.3336]
+2025-04-08 17:49:52,480 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,480 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,513 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:52,513 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7383, 3.7359]
+2025-04-08 17:49:52,513 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7887, 2.9362]
+2025-04-08 17:49:52,513 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,514 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,547 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:52,547 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3102, 3.8687]
+2025-04-08 17:49:52,547 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3378, 3.3204]
+2025-04-08 17:49:52,547 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,547 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,580 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:52,581 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1787, 3.1643]
+2025-04-08 17:49:52,581 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0341, 3.5595]
+2025-04-08 17:49:52,581 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,581 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,615 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:52,615 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5379, 3.2277]
+2025-04-08 17:49:52,615 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3247, 3.8233]
+2025-04-08 17:49:52,615 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,615 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,649 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:52,649 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5270, 3.0864]
+2025-04-08 17:49:52,649 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9492, 3.3521]
+2025-04-08 17:49:52,649 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,649 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,682 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:52,682 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3517, 3.3138]
+2025-04-08 17:49:52,682 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7860, 3.4332]
+2025-04-08 17:49:52,683 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,683 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,716 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:52,716 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0202, 3.6441]
+2025-04-08 17:49:52,716 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8775, 3.0145]
+2025-04-08 17:49:52,716 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,716 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,751 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:52,751 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4214, 3.3867]
+2025-04-08 17:49:52,751 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3642, 3.5902]
+2025-04-08 17:49:52,751 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,751 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,785 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:52,785 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4554, 3.6593]
+2025-04-08 17:49:52,785 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9601, 3.6033]
+2025-04-08 17:49:52,785 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,785 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,817 - INFO -   Loss components:
+2025-04-08 17:49:52,817 - INFO -     Diffusion loss: 2.678081 (coef: 1.0)
+2025-04-08 17:49:52,817 - INFO -     Grasp quality loss: 0.695173 (coef: 0.5)
+2025-04-08 17:49:52,817 - INFO -     Grasp rotation loss: 0.569479 (coef: 0.5)
+2025-04-08 17:49:52,817 - INFO -     Grasp width loss: 32.647243 (coef: 0.005)
+2025-04-08 17:49:52,817 - INFO -     TOTAL loss: 3.473643
+2025-04-08 17:49:52,823 - INFO -   Gradients: avg norm: 0.189821, max norm: 1.307695, non-zero params: 186
+2025-04-08 17:49:52,823 - INFO -   Optimizer step complete, current LR: 9.924039e-05
+2025-04-08 17:49:52,826 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:52,826 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2869, 3.4349]
+2025-04-08 17:49:52,826 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8425, 2.7663]
+2025-04-08 17:49:52,826 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,826 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,859 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:52,859 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0897, 4.2805]
+2025-04-08 17:49:52,860 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6449, 3.5329]
+2025-04-08 17:49:52,860 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,860 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,891 - INFO - 
+=== Epoch 3 Summary ===
+2025-04-08 17:49:52,891 - INFO -   Avg total loss: 3.547913
+2025-04-08 17:49:52,891 - INFO -   Avg diffusion loss: 2.738602
+2025-04-08 17:49:52,891 - INFO -   Avg grasp loss: 1.618621
+2025-04-08 17:49:52,891 - INFO - 
+=== EPOCH 4/20 ===
+2025-04-08 17:49:52,891 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:52,894 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:52,894 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2896, 3.7496]
+2025-04-08 17:49:52,894 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.2633, 3.4389]
+2025-04-08 17:49:52,894 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,894 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,895 - INFO -   Diffusion: timestep range [42, 857], noise range [-3.5802, 3.5734]
+2025-04-08 17:49:52,895 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-3.3114, 3.0660]
+2025-04-08 17:49:52,907 - INFO -   Model output shapes:
+2025-04-08 17:49:52,907 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:52,907 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3755, 0.6680]
+2025-04-08 17:49:52,908 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3748
+2025-04-08 17:49:52,908 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3542, 0.4641]
+2025-04-08 17:49:52,927 - INFO -   Loss components:
+2025-04-08 17:49:52,927 - INFO -     Diffusion loss: 2.563754 (coef: 1.0)
+2025-04-08 17:49:52,927 - INFO -     Grasp quality loss: 0.699226 (coef: 0.5)
+2025-04-08 17:49:52,927 - INFO -     Grasp rotation loss: 0.587274 (coef: 0.5)
+2025-04-08 17:49:52,927 - INFO -     Grasp width loss: 31.799355 (coef: 0.005)
+2025-04-08 17:49:52,927 - INFO -     TOTAL loss: 3.366001
+2025-04-08 17:49:52,933 - INFO -   Gradients: avg norm: 0.186888, max norm: 1.202117, non-zero params: 186
+2025-04-08 17:49:52,933 - INFO -   Optimizer step complete, current LR: 9.698463e-05
+2025-04-08 17:49:52,935 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:52,936 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1894, 3.2852]
+2025-04-08 17:49:52,936 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7850, 2.8405]
+2025-04-08 17:49:52,936 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,936 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:52,971 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:52,971 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2490, 3.4856]
+2025-04-08 17:49:52,972 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6250, 3.9711]
+2025-04-08 17:49:52,972 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:52,972 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,005 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:53,005 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4172, 3.6589]
+2025-04-08 17:49:53,006 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0772, 3.0048]
+2025-04-08 17:49:53,006 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,012 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,046 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:53,046 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2082, 3.1685]
+2025-04-08 17:49:53,046 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0733, 4.0792]
+2025-04-08 17:49:53,046 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,046 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,079 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:53,080 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3139, 3.5279]
+2025-04-08 17:49:53,080 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1625, 3.2889]
+2025-04-08 17:49:53,080 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,080 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,113 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:53,113 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4465, 3.2670]
+2025-04-08 17:49:53,113 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9886, 3.0996]
+2025-04-08 17:49:53,113 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,113 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,147 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:53,147 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1211, 3.2607]
+2025-04-08 17:49:53,147 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3909, 3.2845]
+2025-04-08 17:49:53,147 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,147 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,180 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:53,180 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0734, 3.1140]
+2025-04-08 17:49:53,181 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0905, 3.2112]
+2025-04-08 17:49:53,181 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,181 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,214 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:53,214 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1559, 3.8292]
+2025-04-08 17:49:53,214 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9498, 2.7225]
+2025-04-08 17:49:53,215 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,215 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,248 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:53,248 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2969, 3.1810]
+2025-04-08 17:49:53,248 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9081, 4.5768]
+2025-04-08 17:49:53,249 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,249 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,279 - INFO -   Loss components:
+2025-04-08 17:49:53,279 - INFO -     Diffusion loss: 2.522720 (coef: 1.0)
+2025-04-08 17:49:53,279 - INFO -     Grasp quality loss: 0.691576 (coef: 0.5)
+2025-04-08 17:49:53,279 - INFO -     Grasp rotation loss: 0.574819 (coef: 0.5)
+2025-04-08 17:49:53,279 - INFO -     Grasp width loss: 26.161072 (coef: 0.005)
+2025-04-08 17:49:53,279 - INFO -     TOTAL loss: 3.286723
+2025-04-08 17:49:53,285 - INFO -   Gradients: avg norm: 0.185549, max norm: 1.333081, non-zero params: 186
+2025-04-08 17:49:53,285 - INFO -   Optimizer step complete, current LR: 2.500000e-05
+2025-04-08 17:49:53,289 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:53,289 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1667, 3.5455]
+2025-04-08 17:49:53,289 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6987, 2.8100]
+2025-04-08 17:49:53,289 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,289 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,323 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:53,323 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1751, 3.8435]
+2025-04-08 17:49:53,324 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6589, 2.9080]
+2025-04-08 17:49:53,324 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,324 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,355 - INFO - 
+=== Epoch 4 Summary ===
+2025-04-08 17:49:53,355 - INFO -   Avg total loss: 3.263269
+2025-04-08 17:49:53,355 - INFO -   Avg diffusion loss: 2.494157
+2025-04-08 17:49:53,355 - INFO -   Avg grasp loss: 1.538223
+2025-04-08 17:49:53,355 - INFO - 
+=== EPOCH 5/20 ===
+2025-04-08 17:49:53,356 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:53,359 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:53,359 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7961, 3.4390]
+2025-04-08 17:49:53,359 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.6919, 3.5084]
+2025-04-08 17:49:53,359 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,359 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,359 - INFO -   Diffusion: timestep range [19, 981], noise range [-3.4639, 2.9792]
+2025-04-08 17:49:53,359 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-3.4309, 3.1938]
+2025-04-08 17:49:53,371 - INFO -   Model output shapes:
+2025-04-08 17:49:53,371 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:53,371 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3564, 0.6099]
+2025-04-08 17:49:53,372 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3972
+2025-04-08 17:49:53,372 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3452, 0.4504]
+2025-04-08 17:49:53,390 - INFO -   Loss components:
+2025-04-08 17:49:53,390 - INFO -     Diffusion loss: 2.567564 (coef: 1.0)
+2025-04-08 17:49:53,390 - INFO -     Grasp quality loss: 0.692097 (coef: 0.5)
+2025-04-08 17:49:53,390 - INFO -     Grasp rotation loss: 0.573085 (coef: 0.5)
+2025-04-08 17:49:53,390 - INFO -     Grasp width loss: 25.458115 (coef: 0.005)
+2025-04-08 17:49:53,390 - INFO -     TOTAL loss: 3.327445
+2025-04-08 17:49:53,396 - INFO -   Gradients: avg norm: 0.202612, max norm: 1.422004, non-zero params: 186
+2025-04-08 17:49:53,396 - INFO -   Optimizer step complete, current LR: 6.698730e-06
+2025-04-08 17:49:53,399 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:53,399 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4744, 3.5823]
+2025-04-08 17:49:53,399 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1936, 2.9405]
+2025-04-08 17:49:53,399 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,399 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,433 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:53,433 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4520, 3.4677]
+2025-04-08 17:49:53,433 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6439, 3.1258]
+2025-04-08 17:49:53,433 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,433 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,468 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:53,468 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4510, 4.0446]
+2025-04-08 17:49:53,468 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0085, 3.6162]
+2025-04-08 17:49:53,469 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,469 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,502 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:53,502 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5265, 3.3295]
+2025-04-08 17:49:53,502 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.5959, 2.7961]
+2025-04-08 17:49:53,502 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,502 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,535 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:53,536 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4651, 3.6017]
+2025-04-08 17:49:53,536 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.5488, 3.4150]
+2025-04-08 17:49:53,536 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,536 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,569 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:53,569 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0523, 3.0827]
+2025-04-08 17:49:53,569 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1838, 3.3715]
+2025-04-08 17:49:53,569 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,569 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,602 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:53,602 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2186, 3.5474]
+2025-04-08 17:49:53,602 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7025, 3.0239]
+2025-04-08 17:49:53,603 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,603 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,635 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:53,636 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4306, 3.1970]
+2025-04-08 17:49:53,636 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3838, 2.9769]
+2025-04-08 17:49:53,636 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,636 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,669 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:53,669 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4525, 3.9732]
+2025-04-08 17:49:53,669 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8605, 3.4196]
+2025-04-08 17:49:53,669 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,669 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,702 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:53,702 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.8178, 3.6984]
+2025-04-08 17:49:53,702 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2958, 2.8166]
+2025-04-08 17:49:53,702 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,702 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,735 - INFO -   Loss components:
+2025-04-08 17:49:53,735 - INFO -     Diffusion loss: 2.458157 (coef: 1.0)
+2025-04-08 17:49:53,735 - INFO -     Grasp quality loss: 0.691928 (coef: 0.5)
+2025-04-08 17:49:53,735 - INFO -     Grasp rotation loss: 0.570057 (coef: 0.5)
+2025-04-08 17:49:53,735 - INFO -     Grasp width loss: 26.105682 (coef: 0.005)
+2025-04-08 17:49:53,735 - INFO -     TOTAL loss: 3.219678
+2025-04-08 17:49:53,741 - INFO -   Gradients: avg norm: 0.198102, max norm: 1.376475, non-zero params: 186
+2025-04-08 17:49:53,741 - INFO -   Optimizer step complete, current LR: 3.289899e-05
+2025-04-08 17:49:53,744 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:53,744 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4664, 3.4006]
+2025-04-08 17:49:53,744 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.5446, 3.5082]
+2025-04-08 17:49:53,744 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,744 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,778 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:53,778 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-4.4205, 3.2740]
+2025-04-08 17:49:53,778 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.4154, 3.4125]
+2025-04-08 17:49:53,778 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,778 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,810 - INFO - 
+=== Epoch 5 Summary ===
+2025-04-08 17:49:53,810 - INFO -   Avg total loss: 3.180320
+2025-04-08 17:49:53,810 - INFO -   Avg diffusion loss: 2.413540
+2025-04-08 17:49:53,810 - INFO -   Avg grasp loss: 1.533561
+2025-04-08 17:49:53,929 - INFO - Checkpoint saved: runs/combined_train_standalone_test/20250408_174950/ckpt_epoch_5.pth
+2025-04-08 17:49:53,930 - INFO - Saved model state with 7754332 parameters
+2025-04-08 17:49:53,930 - INFO - 
+=== EPOCH 6/20 ===
+2025-04-08 17:49:53,931 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:53,934 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:53,934 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0719, 3.5043]
+2025-04-08 17:49:53,934 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.5274, 3.2150]
+2025-04-08 17:49:53,934 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,934 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:53,935 - INFO -   Diffusion: timestep range [51, 864], noise range [-3.0994, 3.5010]
+2025-04-08 17:49:53,935 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-3.5432, 3.6327]
+2025-04-08 17:49:53,947 - INFO -   Model output shapes:
+2025-04-08 17:49:53,947 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:53,947 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3523, 0.6279]
+2025-04-08 17:49:53,947 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3787
+2025-04-08 17:49:53,947 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3245, 0.5981]
+2025-04-08 17:49:53,966 - INFO -   Loss components:
+2025-04-08 17:49:53,966 - INFO -     Diffusion loss: 2.323860 (coef: 1.0)
+2025-04-08 17:49:53,966 - INFO -     Grasp quality loss: 0.703507 (coef: 0.5)
+2025-04-08 17:49:53,966 - INFO -     Grasp rotation loss: 0.583571 (coef: 0.5)
+2025-04-08 17:49:53,966 - INFO -     Grasp width loss: 24.390877 (coef: 0.005)
+2025-04-08 17:49:53,966 - INFO -     TOTAL loss: 3.089354
+2025-04-08 17:49:53,972 - INFO -   Gradients: avg norm: 0.179448, max norm: 1.353599, non-zero params: 186
+2025-04-08 17:49:53,972 - INFO -   Optimizer step complete, current LR: 5.868241e-05
+2025-04-08 17:49:53,975 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:53,975 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4200, 3.3227]
+2025-04-08 17:49:53,975 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1237, 2.9823]
+2025-04-08 17:49:53,975 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:53,975 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,009 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:54,009 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7838, 3.6422]
+2025-04-08 17:49:54,009 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7063, 3.2079]
+2025-04-08 17:49:54,009 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,009 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,042 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:54,042 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.8936, 3.5456]
+2025-04-08 17:49:54,042 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8049, 3.1665]
+2025-04-08 17:49:54,043 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,043 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,076 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:54,076 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2948, 3.6843]
+2025-04-08 17:49:54,076 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3800, 3.0688]
+2025-04-08 17:49:54,076 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,076 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,109 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:54,109 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2776, 3.6440]
+2025-04-08 17:49:54,109 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.3139, 3.3941]
+2025-04-08 17:49:54,110 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,110 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,143 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:54,143 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.6075, 3.2075]
+2025-04-08 17:49:54,143 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.6731, 3.5391]
+2025-04-08 17:49:54,143 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,143 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,176 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:54,177 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2906, 3.2915]
+2025-04-08 17:49:54,177 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.4267, 3.2099]
+2025-04-08 17:49:54,177 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,177 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,210 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:54,210 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.6876, 3.3794]
+2025-04-08 17:49:54,210 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0013, 3.0116]
+2025-04-08 17:49:54,210 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,210 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,244 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:54,244 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7256, 3.6965]
+2025-04-08 17:49:54,244 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.6917, 3.1849]
+2025-04-08 17:49:54,244 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,244 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,277 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:54,277 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.4997, 3.0639]
+2025-04-08 17:49:54,277 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.8066, 3.1980]
+2025-04-08 17:49:54,277 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,277 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,309 - INFO -   Loss components:
+2025-04-08 17:49:54,309 - INFO -     Diffusion loss: 2.082468 (coef: 1.0)
+2025-04-08 17:49:54,309 - INFO -     Grasp quality loss: 0.696615 (coef: 0.5)
+2025-04-08 17:49:54,309 - INFO -     Grasp rotation loss: 0.591068 (coef: 0.5)
+2025-04-08 17:49:54,309 - INFO -     Grasp width loss: 21.024778 (coef: 0.005)
+2025-04-08 17:49:54,309 - INFO -     TOTAL loss: 2.831433
+2025-04-08 17:49:54,315 - INFO -   Gradients: avg norm: 0.169805, max norm: 1.262691, non-zero params: 186
+2025-04-08 17:49:54,315 - INFO -   Optimizer step complete, current LR: 9.698463e-05
+2025-04-08 17:49:54,318 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:54,318 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3678, 3.1642]
+2025-04-08 17:49:54,318 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0883, 3.0342]
+2025-04-08 17:49:54,318 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,318 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,352 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:54,352 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.2179, 3.1694]
+2025-04-08 17:49:54,352 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2431, 2.9132]
+2025-04-08 17:49:54,352 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,352 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,383 - INFO - 
+=== Epoch 6 Summary ===
+2025-04-08 17:49:54,384 - INFO -   Avg total loss: 2.980719
+2025-04-08 17:49:54,384 - INFO -   Avg diffusion loss: 2.230303
+2025-04-08 17:49:54,384 - INFO -   Avg grasp loss: 1.500832
+2025-04-08 17:49:54,384 - INFO - 
+=== EPOCH 7/20 ===
+2025-04-08 17:49:54,384 - INFO - GPU Memory: 0.13GB allocated, 0.38GB reserved
+2025-04-08 17:49:54,387 - INFO - Batch 1/13: Generated dummy data
+2025-04-08 17:49:54,387 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.9988, 3.5207]
+2025-04-08 17:49:54,387 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9893, 3.4150]
+2025-04-08 17:49:54,388 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,388 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,388 - INFO -   Diffusion: timestep range [128, 950], noise range [-3.3607, 4.2221]
+2025-04-08 17:49:54,388 - INFO -   Noisy actions shape: torch.Size([8, 7, 50]), range: [-3.1782, 3.9962]
+2025-04-08 17:49:54,400 - INFO -   Model output shapes:
+2025-04-08 17:49:54,400 - INFO -     Diffusion pred: torch.Size([8, 7, 50])
+2025-04-08 17:49:54,401 - INFO -     Grasp quality: torch.Size([8, 64]), range: [0.3669, 0.6196]
+2025-04-08 17:49:54,401 - INFO -     Grasp rotation: torch.Size([8, 64, 4]), norm: 0.3775
+2025-04-08 17:49:54,401 - INFO -     Grasp width: torch.Size([8, 64]), range: [-0.3020, 0.4683]
+2025-04-08 17:49:54,419 - INFO -   Loss components:
+2025-04-08 17:49:54,419 - INFO -     Diffusion loss: 2.093952 (coef: 1.0)
+2025-04-08 17:49:54,419 - INFO -     Grasp quality loss: 0.696375 (coef: 0.5)
+2025-04-08 17:49:54,420 - INFO -     Grasp rotation loss: 0.562569 (coef: 0.5)
+2025-04-08 17:49:54,420 - INFO -     Grasp width loss: 22.208620 (coef: 0.005)
+2025-04-08 17:49:54,420 - INFO -     TOTAL loss: 2.834467
+2025-04-08 17:49:54,426 - INFO -   Gradients: avg norm: 0.168819, max norm: 1.330476, non-zero params: 186
+2025-04-08 17:49:54,426 - INFO -   Optimizer step complete, current LR: 8.213938e-05
+2025-04-08 17:49:54,428 - INFO - Batch 2/13: Generated dummy data
+2025-04-08 17:49:54,428 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.0548, 3.2882]
+2025-04-08 17:49:54,428 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2058, 3.3821]
+2025-04-08 17:49:54,428 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,429 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,461 - INFO - Batch 3/13: Generated dummy data
+2025-04-08 17:49:54,461 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3296, 3.0484]
+2025-04-08 17:49:54,462 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.5903, 3.1556]
+2025-04-08 17:49:54,462 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,462 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,495 - INFO - Batch 4/13: Generated dummy data
+2025-04-08 17:49:54,495 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7016, 3.4719]
+2025-04-08 17:49:54,495 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.8197, 3.2212]
+2025-04-08 17:49:54,495 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,495 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,529 - INFO - Batch 5/13: Generated dummy data
+2025-04-08 17:49:54,529 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-2.9411, 3.3569]
+2025-04-08 17:49:54,529 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.7180, 2.9379]
+2025-04-08 17:49:54,529 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,529 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,563 - INFO - Batch 6/13: Generated dummy data
+2025-04-08 17:49:54,563 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3877, 3.3065]
+2025-04-08 17:49:54,563 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.7996, 3.2703]
+2025-04-08 17:49:54,563 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,563 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,596 - INFO - Batch 7/13: Generated dummy data
+2025-04-08 17:49:54,596 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.5331, 3.2879]
+2025-04-08 17:49:54,596 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.0106, 3.1006]
+2025-04-08 17:49:54,596 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,596 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,630 - INFO - Batch 8/13: Generated dummy data
+2025-04-08 17:49:54,630 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.1556, 3.3433]
+2025-04-08 17:49:54,630 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.7269, 2.6731]
+2025-04-08 17:49:54,630 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,630 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,663 - INFO - Batch 9/13: Generated dummy data
+2025-04-08 17:49:54,663 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.6831, 3.1061]
+2025-04-08 17:49:54,664 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2865, 3.2889]
+2025-04-08 17:49:54,664 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,664 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,697 - INFO - Batch 10/13: Generated dummy data
+2025-04-08 17:49:54,697 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.7021, 3.0489]
+2025-04-08 17:49:54,697 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.9991, 2.9262]
+2025-04-08 17:49:54,697 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,697 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,731 - INFO - Batch 11/13: Generated dummy data
+2025-04-08 17:49:54,731 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.6793, 3.4488]
+2025-04-08 17:49:54,731 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.1811, 2.8636]
+2025-04-08 17:49:54,731 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,731 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,764 - INFO -   Loss components:
+2025-04-08 17:49:54,764 - INFO -     Diffusion loss: 1.857788 (coef: 1.0)
+2025-04-08 17:49:54,764 - INFO -     Grasp quality loss: 0.690462 (coef: 0.5)
+2025-04-08 17:49:54,764 - INFO -     Grasp rotation loss: 0.581942 (coef: 0.5)
+2025-04-08 17:49:54,764 - INFO -     Grasp width loss: 18.480839 (coef: 0.005)
+2025-04-08 17:49:54,764 - INFO -     TOTAL loss: 2.586395
+2025-04-08 17:49:54,770 - INFO -   Gradients: avg norm: 0.164763, max norm: 1.538487, non-zero params: 186
+2025-04-08 17:49:54,770 - INFO -   Optimizer step complete, current LR: 6.698730e-06
+2025-04-08 17:49:54,773 - INFO - Batch 12/13: Generated dummy data
+2025-04-08 17:49:54,773 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.3654, 3.4152]
+2025-04-08 17:49:54,773 - INFO -   Condition shape: torch.Size([8, 104]), range: [-3.2634, 3.3873]
+2025-04-08 17:49:54,773 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,773 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])
+2025-04-08 17:49:54,808 - INFO - Batch 13/13: Generated dummy data
+2025-04-08 17:49:54,808 - INFO -   Trajectory shape: torch.Size([8, 50, 7]), range: [-3.6620, 3.5965]
+2025-04-08 17:49:54,808 - INFO -   Condition shape: torch.Size([8, 104]), range: [-2.7516, 3.5778]
+2025-04-08 17:49:54,808 - INFO -   TSDF grid shape: torch.Size([8, 1, 32, 32, 32]), sparsity: 0.00
+2025-04-08 17:49:54,808 - INFO -   Grasp query points: torch.Size([8, 64, 3]), TSDF query points: torch.Size([8, 32, 3])

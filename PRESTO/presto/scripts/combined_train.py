@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+import types
+import logging
+
+# Set up logging to file
+def setup_logging():
+    logging.basicConfig(
+        filename='log.txt',
+        filemode='w',  # 'w' to overwrite, 'a' to append
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    logging.info("--- Logging Initialized ---\n")
+
+# Call this at the start of your script
+setup_logging()
 
 from typing import Optional, Union, Dict, Any, List
 from dataclasses import dataclass, replace
@@ -96,7 +111,7 @@ except ImportError:
     print("Warning: WandbLogger not found. Logging will be printed to console.")
     WandbLogger = None
 
-import types
+
 
 # --- Helper Function ---
 def dict_to_namespace(d):
@@ -207,10 +222,22 @@ def train_loop(
             device=device,
             dtype=th.long).sub_(1).clamp_(min=0) # Subtract 1 for 0-based indexing, clamp
 
+    logging.info(f"Starting training loop with: epochs={num_epochs}, batch_size={batch_size}")
+    logging.info(f"Loss coefficients: diffusion={diffusion_coef}, grasp={grasp_coef}, tsdf={tsdf_coef}, "
+                 f"collision={collision_coef}, distance={distance_coef}, euclidean={euclidean_coef}")
+    logging.info(f"Model settings: seq_len={seq_len}, obs_dim={obs_dim}, cond_dim={cond_dim}, "
+                 f"tsdf_dim={tsdf_dim}, num_grasp_points={num_grasp_points}, num_tsdf_points={num_tsdf_points}")
+
     ic("Starting training loop...")
 
     for epoch in range(num_epochs):
+        logging.info(f"\n=== EPOCH {epoch+1}/{num_epochs} ===")
         model.train()
+        # Log device memory if CUDA
+        if device.startswith('cuda'):
+            mem_allocated = th.cuda.memory_allocated(device) / (1024 ** 3)
+            mem_reserved = th.cuda.memory_reserved(device) / (1024 ** 3)
+            logging.info(f"GPU Memory: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
         epoch_total_loss = 0.0
         epoch_diffusion_loss = 0.0
         epoch_grasp_loss = 0.0
@@ -234,6 +261,17 @@ def train_loop(
             batch_list = [generate_dummy_datapoint(seq_len, obs_dim, cond_dim, tsdf_dim, num_grasp_points, num_tsdf_points) for _ in range(batch_size)]
             batch = create_batch_from_datapoints(batch_list, device)
             # ===========================
+
+            # Log batch data shapes and statistics
+            logging.info(f"Batch {batch_idx+1}/{num_batches}: Generated dummy data")
+            logging.info(f"  Trajectory shape: {batch['trajectory'].shape}, "
+                         f"range: [{batch['trajectory'].min():.4f}, {batch['trajectory'].max():.4f}]")
+            logging.info(f"  Condition shape: {batch['env-label'].shape}, "
+                         f"range: [{batch['env-label'].min():.4f}, {batch['env-label'].max():.4f}]")
+            logging.info(f"  TSDF grid shape: {batch['tsdf'].shape}, "
+                         f"sparsity: {(batch['tsdf'] == 0).float().mean():.2f}")
+            logging.info(f"  Grasp query points: {batch['grasp_query_points'].shape}, "
+                         f"TSDF query points: {batch['tsdf_query_points'].shape}")
 
             # Extract ground truth data from batch
             # Transpose immediately to [B, C, T] format for diffusion
@@ -260,6 +298,13 @@ def train_loop(
 
             noisy_actions = sched.add_noise(true_action_ds, noise, steps)
 
+            # Log diffusion steps and noise
+            if batch_idx == 0:  # Log only for first batch each epoch to avoid spamming
+                logging.info(f"  Diffusion: timestep range [{steps.min().item()}, {steps.max().item()}], "
+                             f"noise range [{noise.min().item():.4f}, {noise.max().item():.4f}]")
+                logging.info(f"  Noisy actions shape: {noisy_actions.shape}, "
+                             f"range: [{noisy_actions.min().item():.4f}, {noisy_actions.max().item():.4f}]")
+
             # --- Model Forward Pass ---
             with th.cuda.amp.autocast(enabled=use_amp):
                 # Transpose noisy_actions from [B, C, T] to [B, T, C] for the model's PatchEmbed
@@ -282,6 +327,22 @@ def train_loop(
                 pred_grasp_rot = model_output['rot']
                 pred_grasp_width = model_output['width']
                 pred_tsdf = model_output.get('tsdf') # Use .get() for optional TSDF output
+
+                # Log model outputs
+                if batch_idx == 0:  # Log only for first batch each epoch
+                    logging.info("  Model output shapes:")
+                    logging.info(f"    Diffusion pred: {pred_noise_or_x0.shape}")
+                    logging.info(f"    Grasp quality: {pred_grasp_qual.shape}, "
+                                 f"range: [{th.sigmoid(pred_grasp_qual).min().item():.4f}, "
+                                 f"{th.sigmoid(pred_grasp_qual).max().item():.4f}]")
+                    logging.info(f"    Grasp rotation: {pred_grasp_rot.shape}, "
+                                 f"norm: {pred_grasp_rot.norm(dim=-1).mean().item():.4f}")
+                    logging.info(f"    Grasp width: {pred_grasp_width.shape}, "
+                                 f"range: [{pred_grasp_width.min().item():.4f}, {pred_grasp_width.max().item():.4f}]")
+                    if "tsdf" in model_output:
+                        logging.info(f"    TSDF pred: {pred_tsdf.shape}, "
+                                     f"range: [{th.sigmoid(pred_tsdf).min().item():.4f}, "
+                                     f"{th.sigmoid(pred_tsdf).max().item():.4f}]")
 
                 # --- Loss Calculation ---
                 total_loss = 0.0
@@ -427,6 +488,13 @@ def train_loop(
                     loss_dict['tsdf_loss'] = loss_tsdf.item()
                     epoch_tsdf_loss += loss_tsdf.item()
 
+                # Log predicted trajectory statistics if computed
+                if needs_traj and batch_idx == 0:
+                    logging.info(f"  Predicted trajectory shape: {pred_traj_ds.shape}, "
+                                 f"range: [{pred_traj_ds.min().item():.4f}, {pred_traj_ds.max().item():.4f}]")
+                    logging.info(f"  Unnormalized traj shape: {u_pred_sd.shape}, "
+                                 f"range: [{u_pred_sd.min().item():.4f}, {u_pred_sd.max().item():.4f}]")
+
 
             # --- Backward Pass & Optimization Step ---
             scaler.scale(total_loss).backward()
@@ -457,10 +525,70 @@ def train_loop(
 
             progress_bar.set_postfix(loss=total_loss.item())
 
+            # Log loss values in detail
+            if batch_idx % 10 == 0:  # Log every 10 batches
+                logging.info("  Loss components:")
+                logging.info(f"    Diffusion loss: {loss_ddpm.item():.6f} (coef: {diffusion_coef})")
+                
+                if collision_coef > 0:
+                    logging.info(f"    Collision loss: {loss_coll.item():.6f} (coef: {collision_coef})")
+                
+                if distance_coef > 0:
+                    logging.info(f"    Distance loss: {loss_dist.item():.6f} (coef: {distance_coef})")
+                    
+                if euclidean_coef > 0:
+                    logging.info(f"    Euclidean loss: {loss_eucd.item():.6f} (coef: {euclidean_coef})")
+                    
+                logging.info(f"    Grasp quality loss: {loss_qual.item():.6f} (coef: {grasp_coef})")
+                logging.info(f"    Grasp rotation loss: {loss_rot.item():.6f} (coef: {grasp_coef})")
+                logging.info(f"    Grasp width loss: {loss_width.item():.6f} (coef: {grasp_coef*0.01})")
+                
+                if tsdf_coef > 0:
+                    logging.info(f"    TSDF loss: {loss_tsdf.item():.6f} (coef: {tsdf_coef})")
+                    
+                logging.info(f"    TOTAL loss: {total_loss.item():.6f}")
+
+            # Log gradient statistics before stepping
+            if batch_idx % 10 == 0:  # Only log periodically
+                # Get gradient statistics
+                grad_norms = []
+                max_grad = 0
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        grad_norm = param.grad.norm().item()
+                        grad_norms.append(grad_norm)
+                        max_grad = max(max_grad, grad_norm)
+                
+                if grad_norms:
+                    avg_grad = sum(grad_norms) / len(grad_norms)
+                    logging.info(f"  Gradients: avg norm: {avg_grad:.6f}, max norm: {max_grad:.6f}, "
+                                 f"non-zero params: {len(grad_norms)}")
+
+            if batch_idx % 10 == 0:
+                logging.info(f"  Optimizer step complete, current LR: {optimizer.param_groups[0]['lr']:.6e}")
+
 
         # --- End of Epoch ---
         avg_epoch_loss = epoch_total_loss / num_batches
         ic(f"Epoch {epoch+1} finished. Avg Total Loss: {avg_epoch_loss:.4f}")
+
+        # Log epoch summary
+        logging.info(f"\n=== Epoch {epoch+1} Summary ===")
+        logging.info(f"  Avg total loss: {avg_epoch_loss:.6f}")
+        logging.info(f"  Avg diffusion loss: {epoch_diffusion_loss / num_batches:.6f}")
+        logging.info(f"  Avg grasp loss: {epoch_grasp_loss / num_batches:.6f}")
+        
+        if tsdf_coef > 0:
+            logging.info(f"  Avg TSDF loss: {epoch_tsdf_loss / num_batches:.6f}")
+        
+        if collision_coef > 0:
+            logging.info(f"  Avg collision loss: {epoch_collision_loss / num_batches:.6f}")
+        
+        if distance_coef > 0:
+            logging.info(f"  Avg distance loss: {epoch_distance_loss / num_batches:.6f}")
+        
+        if euclidean_coef > 0:
+            logging.info(f"  Avg euclidean loss: {epoch_euclidean_loss / num_batches:.6f}")
 
         # Log epoch averages
         if writer is not None:
@@ -496,10 +624,16 @@ def train_loop(
 
             save_ckpt(save_data, ckpt_path)
             ic(f"Checkpoint saved to {ckpt_path}")
+            logging.info(f"Checkpoint saved: {ckpt_path}")
+            logging.info(f"Saved model state with {sum(p.numel() for p in model.parameters())} parameters")
 
     # --- End of Training ---
     end_time = time.time()
     ic(f"Training finished in {(end_time - start_time)/60:.2f} minutes.")
+    logging.info(f"\n=== Training Complete ===")
+    logging.info(f"Total training time: {(end_time - start_time)/60:.2f} minutes")
+    logging.info(f"Final global step: {global_step}")
+    logging.info("----------------------\n")
     if writer is not None:
         writer.finish()
 
@@ -812,6 +946,15 @@ def train(
         num_grasp_points=num_grasp_points,
         num_tsdf_points=num_tsdf_points,
     )
+
+    # Log model configuration
+    logging.info(f"\n=== Model Configuration ===")
+    logging.info(f"Model: PrestoGIGA with depth={model_depth}, heads={model_num_heads}, hidden={model_hidden_size}")
+    logging.info(f"Sequence length: {seq_len}, patch size: {model_patch_size if 'model_patch_size' in locals() else 1}")
+    logging.info(f"GIGA encoder: {giga_encoder}, decoder: {giga_decoder}, c_dim: {giga_c_dim}")
+    logging.info(f"Diffusion: beta_schedule={beta_schedule}, steps={num_train_timesteps}, type={prediction_type}")
+    logging.info(f"x0_type: {x0_type}, x0_iter: {x0_iter}")
+    logging.info(f"Optimizer: AdamW with lr={learning_rate}, weight_decay={weight_decay}")
 
 
 # --- Main Execution ---

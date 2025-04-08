@@ -729,4 +729,3 @@ def predict_grasp_volumes(model, tsdf, resolution=40, device=None):
     
     return qual, rot, width, query_points.view(resolution, resolution, resolution, 3)
 
-
