@@ -363,7 +363,7 @@ class PrestoGIGA(nn.Module):
                     tsdf_tensor = tsdf_features['grid']
                 else:
                     raise KeyError("Expected 'grid' key in tsdf_encoder output, "
-                                   f"but found keys: {tsdf_features.keys()}")
+                                f"but found keys: {tsdf_features.keys()}")
             else:
                 tsdf_tensor = tsdf
             
@@ -371,7 +371,9 @@ class PrestoGIGA(nn.Module):
             tsdf_embed = tsdf_embed.unsqueeze(1)
         else:
             tsdf_embed = None
+            tsdf_features = None  # Make sure tsdf_features is defined even when tsdf is None
             
+        # Create features - FIXED: only assign features once
         if x_embed is not None and tsdf_embed is not None and self.cfg.use_joint_embeddings:
             features = torch.cat([x_embed, tsdf_embed], dim=1)
         elif x_embed is not None:
@@ -382,6 +384,7 @@ class PrestoGIGA(nn.Module):
         else:
             raise ValueError("Either x or tsdf must be provided")
             
+        # Create conditional embedding
         if t is not None:
             t_embed = self.t_embedder(t)
             
@@ -393,19 +396,13 @@ class PrestoGIGA(nn.Module):
         else:
             c = None
 
-        if x_embed is not None:
-            features = x_embed
-        elif tsdf_embed is not None:
-            features = tsdf_embed.expand(-1, self.x_embedder.num_patches, -1)
-            features = features + self.pos_embed
-        else:
-            raise ValueError("Either x or tsdf must be provided")
-
+        # Add TSDF embedding to condition if available
         if c is not None and tsdf_embed is not None:
             c = c + tsdf_embed.squeeze(1)
         elif c is None and tsdf_embed is not None:
             c = tsdf_embed.squeeze(1)
 
+        # Process through transformer blocks
         for block in self.blocks:
             features = block(features, c)
 
@@ -414,20 +411,38 @@ class PrestoGIGA(nn.Module):
     def forward_diffusion(self, features, c):
         """
         Process features through diffusion output head using PRESTO's components
-        
+
         Args:
-            features: [B, N, D] transformer features
+            features: [B, N, D] transformer features (N = num_seq_tokens + num_other_tokens)
             c: [B, D] conditioning embedding
-            
+
         Returns:
             [B, C, T] diffusion output
         """
-        x = self.final_layer(features, c)
-        
-        if self.use_cond_token:
-            x = x[..., :-1, :]
-            
-        x = self.unpatchify(x)
+        # Apply the final layer to all features
+        processed_features = self.final_layer(features, c)
+        # processed_features shape: [B, N, patch_size * out_channels]
+
+        # Get the number of patches corresponding to the original sequence 'x'
+        # This is determined by the PatchEmbed configuration (input_size, patch_size)
+        num_sequence_patches = self.x_embedder.num_patches # e.g., 1000 // 20 = 50
+
+        # Select only the features corresponding to the sequence patches
+        # Assumes sequence patches are the first `num_sequence_patches` tokens
+        # This holds if features were constructed like cat([x_embed, other_embeds], dim=1)
+        sequence_features = processed_features[:, :num_sequence_patches, :]
+        # sequence_features shape: [B, num_sequence_patches, patch_size * out_channels]
+
+        # Note: The original code had a check for `self.use_cond_token` here.
+        # If that feature is used (default is False), its interaction with token
+        # selection needs careful review.
+        # if self.use_cond_token:
+        #     x = x[..., :-1, :] # Original logic might need adjustment
+
+        # Unpatchify using only the sequence features
+        x = self.unpatchify(sequence_features)
+        # x shape: [B, out_channels, num_sequence_patches * patch_size]
+        # e.g., [B, 14, 50 * 20] = [B, 14, 1000]
         return x
         
     def forward_grasp(self, p, tsdf_features):
