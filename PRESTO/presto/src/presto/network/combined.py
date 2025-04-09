@@ -34,27 +34,63 @@ from presto.ConvONets.encoder import encoder_dict
 
 
 class TSDFEmbedder(nn.Module):
-    """Encoder for TSDF voxel grids from GIGA"""
-    def __init__(self, hidden_size: int = 256, c_dim: int = 32):
+    """Embedder for concatenated 2D TSDF feature planes (xy, xz, yz) from GIGA's encoder."""
+    def __init__(self, hidden_size: int = 256, c_dim: int = 32, input_resolution: int = 32):
+        """
+        Args:
+            hidden_size: The target output embedding dimension.
+            c_dim: The feature dimension of *each* input plane from the encoder.
+            input_resolution: The spatial resolution (H=W) of the input feature planes.
+        """
         super().__init__()
-        # Input to this embedder is the output of tsdf_encoder, which has c_dim channels
-        self.conv1 = nn.Conv3d(c_dim, 16, 3, stride=2, padding=1)
-        self.conv2 = nn.Conv3d(16, 32, 3, stride=2, padding=1)
-        self.conv3 = nn.Conv3d(32, 64, 3, stride=2, padding=1)
-        self.conv4 = nn.Conv3d(64, c_dim, 3, stride=2, padding=1)
+        # Input will be concatenation of 3 planes, so input channels = 3 * c_dim
+        input_channels = 3 * c_dim
+        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=2, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
 
-        # Calculate the flattened size after convolutions (assuming input 32x32x32 -> 2x2x2)
-        # If the encoder output spatial dim changes, this needs update.
-        flat_size = c_dim * 2 * 2 * 2
+        # Calculate the flattened size after convolutions
+        # Input: input_resolution -> Output: input_resolution / 2 / 2 / 2
+        final_res = input_resolution // 8
+        flat_size = 256 * final_res * final_res
         self.proj = nn.Linear(flat_size, hidden_size)
         self.c_dim = c_dim
-        
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        x = F.relu(self.conv4(x))
-        x = x.view(x.size(0), -1)
+        self.input_resolution = input_resolution # Store for potential checks
+
+    def forward(self, x_planes: Dict[str, torch.Tensor]):
+        """
+        Forward pass for the TSDF embedder using 2D feature planes.
+
+        Args:
+            x_planes: A dictionary containing the 2D feature planes,
+                      e.g., {'xy': [B, C, H, W], 'xz': [B, C, H, W], 'yz': [B, C, H, W]}
+
+        Returns:
+            torch.Tensor: The final embedding vector [B, hidden_size].
+        """
+        # Ensure required planes are present and have expected shape
+        required_planes = ['xy', 'xz', 'yz']
+        if not all(plane in x_planes for plane in required_planes):
+            raise ValueError(f"Missing one or more required planes ({required_planes}) in input dictionary.")
+
+        # Check shapes (optional but good practice)
+        B, C, H, W = x_planes['xy'].shape
+        if C != self.c_dim or H != self.input_resolution or W != self.input_resolution:
+             print(f"Warning: Input plane shape ({B},{C},{H},{W}) doesn't match expected c_dim ({self.c_dim}) or resolution ({self.input_resolution}).")
+             # Or raise an error:
+             # raise ValueError(f"Input plane shape mismatch...")
+
+        # Concatenate planes along the channel dimension
+        x_cat = torch.cat([x_planes['xy'], x_planes['xz'], x_planes['yz']], dim=1) # Shape: [B, 3*C, H, W]
+
+        x = F.relu(self.bn1(self.conv1(x_cat)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+
+        x = x.view(x.size(0), -1) # Flatten
         x = self.proj(x)
         return x
 
@@ -341,73 +377,88 @@ class PrestoGIGA(nn.Module):
     def encode_shared(self, x=None, tsdf=None, t=None, y=None):
         """
         Create a shared representation from either or both diffusion and TSDF inputs
-        
+
         Args:
             x: [B, C, T] sequence data for diffusion
-            tsdf: [B, 1, D, D, D] TSDF voxel grid
+            tsdf: [B, 1, D, D, D] TSDF voxel grid (input to encoder)
             t: diffusion timesteps
             y: conditioning variables
-            
+
         Returns:
             features: [B, N, D] transformer features
             c: [B, D] conditioning embedding
+            tsdf_features: Dictionary containing output features from tsdf_encoder (e.g., {'xy': ..., 'xz': ..., 'yz': ...})
+                           or None if tsdf is None.
         """
         if x is not None:
+            # Ensure pos_embed is initialized if needed (moved from original code block)
+            if not hasattr(self, 'pos_embed') or self.pos_embed is None:
+                 self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
+                 pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
+                 self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
+
             x_embed = self.x_embedder(x) + self.pos_embed
         else:
             x_embed = None
-            
+
+        tsdf_embed = None
+        tsdf_features = None # Initialize tsdf_features
+
         if tsdf is not None:
             if self.tsdf_encoder is not None:
-                tsdf_features = self.tsdf_encoder(tsdf)
-                if 'grid' in tsdf_features:
-                    tsdf_tensor = tsdf_features['grid']
-                else:
-                    raise KeyError("Expected 'grid' key in tsdf_encoder output, "
-                                f"but found keys: {tsdf_features.keys()}")
+                # tsdf_encoder now returns a dictionary of features (planes or grid)
+                tsdf_features = self.tsdf_encoder(tsdf) # e.g., {'xy': [B,C,H,W], 'xz': [B,C,H,W], 'yz': [B,C,H,W]}
+
+                # Pass the dictionary directly to the embedder
+                tsdf_embed = self.tsdf_embedder(tsdf_features) # Expects dict, outputs [B, hidden_size]
+                tsdf_embed = tsdf_embed.unsqueeze(1) # Shape: [B, 1, hidden_size]
             else:
-                tsdf_tensor = tsdf
-            
-            tsdf_embed = self.tsdf_embedder(tsdf_tensor)
-            tsdf_embed = tsdf_embed.unsqueeze(1)
-        else:
-            tsdf_embed = None
-            tsdf_features = None  # Make sure tsdf_features is defined even when tsdf is None
-            
-        # Create features - FIXED: only assign features once
+                # Handle case where there's no encoder but tsdf is provided (unlikely for this setup)
+                print("Warning: TSDF provided but no tsdf_encoder defined.")
+                # tsdf_embed remains None
+
+        # Create combined features for the transformer blocks
         if x_embed is not None and tsdf_embed is not None and self.cfg.use_joint_embeddings:
+            # Concatenate sequence embedding and the single TSDF embedding token
+            print('here')
             features = torch.cat([x_embed, tsdf_embed], dim=1)
         elif x_embed is not None:
             features = x_embed
         elif tsdf_embed is not None:
+            # If only TSDF is provided, expand its embedding to match sequence length expectations
+            # Ensure pos_embed is initialized if needed (as above)
+            if not hasattr(self, 'pos_embed') or self.pos_embed is None:
+                 self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
+                 pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
+                 self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
+
+            # Expand the single TSDF embedding token across the sequence dimension
+            # Note: This assumes the transformer expects a sequence. Adjust if architecture changes.
+            # We might need a different way to handle TSDF-only input depending on the transformer design.
+            # For now, replicate the TSDF embedding and add positional encoding.
             features = tsdf_embed.expand(-1, self.x_embedder.num_patches, -1)
-            features = features + self.pos_embed
+            features = features + self.pos_embed # Add positional encoding
         else:
             raise ValueError("Either x or tsdf must be provided")
-            
-        # Create conditional embedding
-        if t is not None:
-            t_embed = self.t_embedder(t)
-            
-            if self.use_cond and y is not None:
-                y_embed = self.y_embedder(y, self.training)
-                c = t_embed + y_embed
-            else:
-                c = t_embed
+
+        # --- Conditioning ---
+        t_embed = self.t_embedder(t) if t is not None else None # [B, D]
+        y_embed = self.y_embedder(y, train=self.training) if y is not None else None # [B, D]
+
+        # Combine conditioning embeddings (handle None cases)
+        if t_embed is not None and y_embed is not None:
+            c = t_embed + y_embed
+        elif t_embed is not None:
+            c = t_embed
+        elif y_embed is not None:
+            c = y_embed
         else:
-            c = None
+            # If no time or class conditioning, create a zero embedding or handle as needed
+            c = torch.zeros(features.shape[0], self.cfg.hidden_size, device=features.device, dtype=features.dtype)
+            # Alternatively, could raise an error if conditioning is always expected
 
-        # Add TSDF embedding to condition if available
-        if c is not None and tsdf_embed is not None:
-            c = c + tsdf_embed.squeeze(1)
-        elif c is None and tsdf_embed is not None:
-            c = tsdf_embed.squeeze(1)
-
-        # Process through transformer blocks
-        for block in self.blocks:
-            features = block(features, c)
-
-        return features, c, tsdf_features
+        # Return the features for transformer blocks, conditioning, and raw encoder output
+        return features, c, tsdf_features # Return tsdf_features dict
         
     def forward_diffusion(self, features, c):
         """
@@ -446,141 +497,169 @@ class PrestoGIGA(nn.Module):
         # e.g., [B, 14, 50 * 20] = [B, 14, 1000]
         return x
         
-    def forward_grasp(self, p, tsdf_features):
+    def forward_grasp(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
         """
-        Predict grasp affordance using the GIGA decoder heads.
+        Process features through grasp output heads using GIGA's decoder.
 
         Args:
-            p (torch.Tensor): Query points [B, M, 3].
-            tsdf_features (dict): Feature dictionary from the tsdf_encoder (e.g., {'grid': tensor}).
+            tsdf_features: Dictionary of encoded features from tsdf_encoder
+                           (e.g., {'xy': ..., 'xz': ..., 'yz': ...}).
+            positions: [B, M, 3] query positions for grasp prediction.
 
         Returns:
-            qual, rot, width tensors.
+            qual: [B, M, 1] grasp quality
+            rot: [B, M, 4] grasp rotation
+            width: [B, M, 1] grasp width
         """
-        batch_size = p.size(0)
-        num_queries = p.size(1)
+        if self.decoder_qual is None:
+            raise RuntimeError("Grasp quality decoder is not initialized.")
 
-        # --- MODIFIED DECODER CALLS ---
-        # Call each specific decoder head
-        if self.decoder_qual is not None:
-            qual = self.decoder_qual(p, tsdf_features) # [B, M, 1]
-        else:
-            qual = torch.zeros(batch_size, num_queries, 1, device=p.device)
-            warnings.warn("Grasp quality decoder is not initialized.", RuntimeWarning)
+        # The GIGA decoder expects the encoded features 'c' directly.
+        # The dictionary tsdf_features holds these features.
+        qual = self.decoder_qual(positions, tsdf_features) # Pass positions and the feature dict
 
-        if self.decoder_rot is not None:
-            rot = self.decoder_rot(p, tsdf_features) # [B, M, rot_dim]
-        else:
-            rot = torch.zeros(batch_size, num_queries, self.rot_dim, device=p.device)
+        if self.decoder_rot is None:
+            rot = torch.zeros(positions.shape[0], positions.shape[1], self.rot_dim, device=positions.device)
             warnings.warn("Grasp rotation decoder is not initialized.", RuntimeWarning)
-
-        if self.decoder_width is not None:
-            width = self.decoder_width(p, tsdf_features) # [B, M, 1]
         else:
-            width = torch.zeros(batch_size, num_queries, 1, device=p.device)
-            warnings.warn("Grasp width decoder is not initialized.", RuntimeWarning)
-        # --- END MODIFIED DECODER CALLS ---
+            rot = self.decoder_rot(positions, tsdf_features) # Pass positions and the feature dict
 
-        # Ensure outputs have the expected last dimension if necessary
-        # (Decoders might already output [B, M, 1] or [B, M, rot_dim])
-        # Example: if qual is [B, M], uncomment below
-        # if qual.dim() == 2: qual = qual.unsqueeze(-1)
-        # if width.dim() == 2: width = width.unsqueeze(-1)
+        if self.decoder_width is None:
+            width = torch.zeros(positions.shape[0], positions.shape[1], 1, device=positions.device)
+            warnings.warn("Grasp width decoder is not initialized.", RuntimeWarning)
+        else:
+            width = self.decoder_width(positions, tsdf_features) # Pass positions and the feature dict
 
         return qual, rot, width
         
-    def forward_tsdf(self, features, positions):
+    def forward_tsdf(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
         """
-        Process features through TSDF output head using GIGA's decoder
-        
+        Process features through TSDF output head using GIGA's decoder.
+
         Args:
-            features: [B, N, D] transformer features
-            positions: [B, M, 3] query positions
-            
+            tsdf_features: Dictionary of encoded features from tsdf_encoder
+                           (e.g., {'xy': ..., 'xz': ..., 'yz': ...}).
+            positions: [B, M, 3] query positions for TSDF prediction.
+
         Returns:
             tsdf: [B, M, 1] TSDF values
         """
-        point_features = self.feature_extractor(
-            features, positions, self.cfg.grid_size)
-        
-        batch_size = point_features.shape[0]
-        c = {
-            'grid_feat': point_features.reshape(batch_size, self.cfg.c_dim, 1, 1, 1)
-        }
-        
-        tsdf = self.decoder_tsdf(positions, c)
-        
+        if self.decoder_tsdf is None:
+            raise RuntimeError("TSDF decoder is not initialized.")
+
+        # The GIGA decoder expects the encoded features 'c' directly.
+        # The dictionary tsdf_features holds these features.
+        tsdf = self.decoder_tsdf(positions, tsdf_features) # Pass positions and the feature dict
+
         return tsdf
         
-    def forward(self, 
+    def forward(self,
                 sample: Optional[torch.FloatTensor] = None,
                 timestep: Optional[Union[torch.Tensor, float, int]] = None,
                 class_labels: Optional[torch.Tensor] = None,
                 tsdf: Optional[torch.FloatTensor] = None,
                 p: Optional[torch.FloatTensor] = None,
                 p_tsdf: Optional[torch.FloatTensor] = None,
-                mode: str = "joint",
+                mode: str = "joint", # "diffusion", "grasp", "tsdf", "joint"
                 return_dict: bool = True):
         """
-        Unified forward pass that supports diffusion, grasp, or joint modes
-        
+        Unified forward pass that supports diffusion, grasp, tsdf, or joint modes.
+
         Args:
-            sample: [B, C, T] sequence data for diffusion
-            timestep: diffusion timesteps
-            class_labels: conditioning variables
-            tsdf: [B, 1, D, D, D] TSDF voxel grid
-            p: [B, M, 3] query positions for grasp prediction
-            p_tsdf: [B, M, 3] query positions for TSDF prediction
-            mode: one of "diffusion", "grasp", "joint"
-            return_dict: whether to return a dictionary
-            
+            sample: [B, C, T] sequence data for diffusion input.
+            timestep: Diffusion timesteps.
+            class_labels: Conditioning variables (e.g., goal embedding).
+            tsdf: [B, 1, D, D, D] TSDF voxel grid (input to encoder).
+            p: [B, M, 3] query positions for grasp prediction.
+            p_tsdf: [B, N, 3] query positions for TSDF prediction.
+            mode: Specifies which parts of the model to run.
+                  "diffusion": Only diffusion prediction.
+                  "grasp": Only grasp prediction (requires tsdf and p).
+                  "tsdf": Only TSDF prediction (requires tsdf and p_tsdf).
+                  "joint": Runs diffusion and optionally grasp/tsdf if inputs provided.
+            return_dict: Whether to return a dictionary.
+
         Returns:
-            Dictionary with model outputs
+            Dictionary with model outputs based on the mode.
         """
         # Safely get the use_amp setting from the config, default to None if not present
-        use_amp_config = getattr(self.cfg, 'use_amp', None)
+        use_amp_config = getattr(self.cfg, 'use_amp', False) # Default to False if not set
+        amp_context = torch.cuda.amp.autocast(enabled=use_amp_config) if torch.cuda.is_available() else nullcontext()
 
-        amp_ctx = (nullcontext() if (use_amp_config is None)
-                  else torch.cuda.amp.autocast(enabled=use_amp_config))
-                  
-        with amp_ctx:
-            if timestep is not None:
-                if not torch.is_tensor(timestep):
-                    timestep = torch.tensor([timestep], dtype=torch.long, device=sample.device)
-                elif torch.is_tensor(timestep) and len(timestep.shape) == 0:
-                    pass
-                timestep = timestep.to(sample.device if sample is not None else tsdf.device)
-            
-            features, c, tsdf_features = self.encode_shared(
-                x=sample, tsdf=tsdf, t=timestep, y=class_labels)
-            
-            results = {}
-            
+        output = {}
+
+        with amp_context:
+            # 1. Encode inputs and get shared features
+            # Pass diffusion inputs (sample, timestep, class_labels) and TSDF input
+            # encode_shared returns transformer features, conditioning, and raw tsdf encoder output dict
+            features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
+
+            # 2. Diffusion Prediction (if mode requires it)
             if mode in ["diffusion", "joint"] and sample is not None:
-                diffusion_out = self.forward_diffusion(features, c)
-                results["sample"] = diffusion_out
-            
-            if mode in ["grasp", "joint"] and p is not None:
-                qual, rot, width = self.forward_grasp(p, tsdf_features)
-                results["qual"] = qual
-                results["rot"] = rot
-                results["width"] = width
-            
-            if mode in ["grasp", "joint"] and p_tsdf is not None and self.cfg.use_tsdf:
-                tsdf_out = self.forward_tsdf(features, p_tsdf)
-                results["tsdf"] = tsdf_out
-                
-            if not return_dict:
-                # If not returning dict, the original code returned the dict anyway.
-                # We'll keep returning the full dict for consistency.
-                # If a tuple output is desired for return_dict=False, this needs adjustment.
-                return results
+                # Process features through transformer blocks
+                # Note: features might now include an extra token for tsdf_embed
+                # Adjust FinalLayer input if necessary based on how features are structured
+                num_extra_tokens = 1 if (tsdf is not None and self.cfg.use_joint_embeddings) else 0
 
-            # --- MODIFIED RETURN LOGIC ---
-            # Always return the full results dictionary if return_dict is True,
-            # making all computed outputs accessible.
-            return results
-            # --- END MODIFICATION ---
+                # Apply transformer blocks
+                for block in self.blocks:
+                     features = block(features, c) # features shape [B, N+num_extra, D]
+
+                # Apply final layer for diffusion output
+                # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
+                sequence_features = features[:, :-num_extra_tokens, :] if num_extra_tokens > 0 else features
+                # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
+                final_layer_output = self.final_layer(sequence_features, c)
+
+                # --- Manually Unpatchify ---
+                # B = batch size
+                # N = num_sequence_patches
+                # P = patch_size
+                # C_out = output channels (self.out_dim, which is in_channels * 2 if learn_sigma else in_channels)
+                B, N, _ = final_layer_output.shape
+                P = self.x_embedder.patch_size
+                C_out = self.out_channels # Get the output channel dimension defined in __init__
+
+                # Reshape: [B, N, P * C_out] -> [B, N, P, C_out]
+                x_reshaped = final_layer_output.view(B, N, P, C_out)
+                # Permute: [B, N, P, C_out] -> [B, C_out, N, P]
+                x_permuted = x_reshaped.permute(0, 3, 1, 2)
+                # Reshape: [B, C_out, N, P] -> [B, C_out, N * P] (where N * P = T, the original sequence length)
+                diffusion_out_unpatchified = x_permuted.reshape(B, C_out, N * P)
+                # --------------------------
+
+                output["diffusion_output"] = diffusion_out_unpatchified # Store the unpatchified output
+
+            # 3. Grasp Prediction (if mode requires it and inputs available)
+            if mode in ["grasp", "joint"] and tsdf_features is not None and p is not None:
+                if not self.cfg.use_grasp:
+                     print("Warning: Grasp prediction requested but model cfg.use_grasp is False.")
+                else:
+                     qual, rot, width = self.forward_grasp(tsdf_features, p)
+                     output["qual"] = qual
+                     output["rot"] = rot
+                     output["width"] = width
+
+            # 4. TSDF Prediction (if mode requires it and inputs available)
+            if mode in ["tsdf", "joint"] and tsdf_features is not None and p_tsdf is not None:
+                 if not self.cfg.use_tsdf:
+                     print("Warning: TSDF prediction requested but model cfg.use_tsdf is False.")
+                 else:
+                     tsdf_pred = self.forward_tsdf(tsdf_features, p_tsdf)
+                     output["tsdf_pred"] = tsdf_pred
+
+
+        if not return_dict:
+             # Return tuple based on mode - adapt as needed
+             if mode == "diffusion":
+                 return output.get("diffusion_output")
+             elif mode == "grasp":
+                 return output.get("qual"), output.get("rot"), output.get("width")
+             # ... handle other modes or return combined tuple
+             else:
+                 return tuple(output.values())
+        else:
+             return output
 
     def grad_refine(self, tsdf, pos, bound_value=0.0125, lr=1e-6, num_step=1):
         """
