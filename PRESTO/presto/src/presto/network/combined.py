@@ -135,11 +135,12 @@ class PrestoGIGA(nn.Module):
         use_grasp: bool = True
         use_tsdf: bool = True
         
-        decoder_type: str = 'simple_fc'
+        decoder_type: str = 'simple_local'
         decoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
+            'dim': 3,
+            'sample_mode': 'bilinear',
             'hidden_size': 32,
-            'n_blocks': 5,
-            'leaky': False,
+            'concat_feat': True
         })
         padding: float = 0.1
         
