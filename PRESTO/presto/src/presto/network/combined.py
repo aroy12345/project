@@ -847,43 +847,7 @@ class PrestoGIGA(nn.Module):
         
         return features, c, tsdf_features
         
-    def forward_diffusion(self, features, c):
-        """
-        Process features through diffusion output head using PRESTO's components
-
-        Args:
-            features: [B, N, D] transformer features (N = num_seq_tokens + num_other_tokens)
-            c: [B, D] conditioning embedding
-
-        Returns:
-            [B, C, T] diffusion output
-        """
-        # Apply the final layer to all features
-        processed_features = self.final_layer(features, c)
-        # processed_features shape: [B, N, patch_size * out_channels]
-
-        # Get the number of patches corresponding to the original sequence 'x'
-        # This is determined by the PatchEmbed configuration (input_size, patch_size)
-        num_sequence_patches = self.x_embedder.num_patches # e.g., 1000 // 20 = 50
-
-        # Select only the features corresponding to the sequence patches
-        # Assumes sequence patches are the first `num_sequence_patches` tokens
-        # This holds if features were constructed like cat([x_embed, other_embeds], dim=1)
-        sequence_features = processed_features[:, :num_sequence_patches, :]
-        # sequence_features shape: [B, num_sequence_patches, patch_size * out_channels]
-
-        # Note: The original code had a check for `self.use_cond_token` here.
-        # If that feature is used (default is False), its interaction with token
-        # selection needs careful review.
-        # if self.use_cond_token:
-        #     x = x[..., :-1, :] # Original logic might need adjustment
-
-        # Unpatchify using only the sequence features
-        x = self.unpatchify(sequence_features)
-        # x shape: [B, out_channels, num_sequence_patches * patch_size]
-        # e.g., [B, 14, 50 * 20] = [B, 14, 1000]
-        return x
-        
+    
     def forward_grasp(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
         """
         Process features through grasp output heads using GIGA's decoder.
@@ -940,7 +904,7 @@ class PrestoGIGA(nn.Module):
         """
         model_logger.info(f"[PrestoGIGA.forward_tsdf] Input shapes: positions={positions.shape}")
         model_logger.info(f"[PrestoGIGA.forward_tsdf] tsdf_features keys: {list(tsdf_features.keys())}")
-        
+        print('here!!!!!')
         if self.decoder_tsdf is None:
             raise RuntimeError("TSDF decoder is not initialized.")
 
@@ -951,7 +915,7 @@ class PrestoGIGA(nn.Module):
         # After TSDF prediction
         model_logger.info(f"[PrestoGIGA.forward_tsdf] TSDF output shape: {tsdf.shape}, "
               f"range: [{tsdf.min().item():.4f}, {tsdf.max().item():.4f}]")
-        
+        print(tsdf.shape, 'tsdf_FORWWARD')
         return tsdf
         
     def forward(self,
@@ -1010,7 +974,7 @@ class PrestoGIGA(nn.Module):
 
                 # Apply transformer blocks
                 for block in self.blocks:
-                     features = block(features, c) # features shape [B, N+num_extra, D]
+                     features = block.forward(features, c) # features shape [B, N+num_extra, D]
 
                 # Apply final layer for diffusion output
                 # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
@@ -1052,11 +1016,15 @@ class PrestoGIGA(nn.Module):
                      output["width"] = width
 
             # 4. TSDF Prediction (if mode requires it and inputs available)
+          
             if mode in ["tsdf", "joint"] and tsdf_features is not None and p_tsdf is not None:
+                 print('here!')
                  if not self.cfg.use_tsdf:
+                     print('HERE!!!!')
                      model_logger.info("Warning: TSDF prediction requested but model cfg.use_tsdf is False.")
                  else:
                      tsdf_pred = self.forward_tsdf(tsdf_features, p_tsdf)
+                     print(tsdf_pred.shape, 'tsdf_pred')
                      output["tsdf_pred"] = tsdf_pred
 
         # After encode_shared
