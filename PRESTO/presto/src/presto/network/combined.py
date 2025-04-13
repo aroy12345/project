@@ -744,12 +744,14 @@ class PrestoGIGA(nn.Module):
         
         if x is not None:
             # Ensure pos_embed is initialized if needed (moved from original code block)
+            print(x.shape, 'x')
             if not hasattr(self, 'pos_embed') or self.pos_embed is None:
                  self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
                  pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
                  self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
 
             x_embed = self.x_embedder(x) + self.pos_embed
+            print(x_embed.shape, 'x_embed')
         else:
             x_embed = None
 
@@ -760,10 +762,11 @@ class PrestoGIGA(nn.Module):
             if self.tsdf_encoder is not None:
                 # tsdf_encoder now returns a dictionary of features (planes or grid)
                 tsdf_features = self.tsdf_encoder(tsdf) # e.g., {'xy': [B,C,H,W], 'xz': [B,C,H,W], 'yz': [B,C,H,W]}
-
+                print(tsdf_features['xz'].shape, 'tsdf_features')
                 # Pass the dictionary directly to the embedder
                 tsdf_embed = self.tsdf_embedder(tsdf_features) # Expects dict, outputs [B, hidden_size]
                 tsdf_embed = tsdf_embed.unsqueeze(1) # Shape: [B, 1, hidden_size]
+                print(tsdf_embed.shape, 'tsdf_embed')
             else:
                 # Handle case where there's no encoder but tsdf is provided (unlikely for this setup)
                 model_logger.info("Warning: TSDF provided but no tsdf_encoder defined.")
@@ -774,6 +777,7 @@ class PrestoGIGA(nn.Module):
             # Concatenate sequence embedding and the single TSDF embedding token
             model_logger.info('Concatenating x_embed and tsdf_embed for joint embeddings')
             features = torch.cat([x_embed, tsdf_embed], dim=1)
+            print(features.shape, 'features')
         elif x_embed is not None:
             features = x_embed
         elif tsdf_embed is not None:
@@ -796,10 +800,14 @@ class PrestoGIGA(nn.Module):
         # --- Conditioning ---
         t_embed = self.t_embedder(t) if t is not None else None # [B, D]
         y_embed = self.y_embedder(y, train=self.training) if y is not None else None # [B, D]
-
+        print(t.shape, 't')
+        print(y.shape, 'y')
+        print(t_embed.shape, 't_embed')
+        print(y_embed.shape, 'y_embed')
         # Combine conditioning embeddings (handle None cases)
         if t_embed is not None and y_embed is not None:
             c = t_embed + y_embed
+            print(c.shape, 'c')
         elif t_embed is not None:
             c = t_embed
         elif y_embed is not None:
@@ -889,6 +897,7 @@ class PrestoGIGA(nn.Module):
         # The GIGA decoder expects the encoded features 'c' directly.
         # The dictionary tsdf_features holds these features.
         qual = self.decoder_qual(positions, tsdf_features) # Pass positions and the feature dict
+        print(self.decoder_qual, 'decoder_qual', self.decoder_rot, 'decoder_rot', self.decoder_width, 'decoder_width')
 
         if self.decoder_rot is None:
             rot = torch.zeros(positions.shape[0], positions.shape[1], self.rot_dim, device=positions.device)
@@ -1006,8 +1015,10 @@ class PrestoGIGA(nn.Module):
                 # Apply final layer for diffusion output
                 # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
                 sequence_features = features[:, :-num_extra_tokens, :] if num_extra_tokens > 0 else features
+                print(sequence_features.shape, 'sequence_features')
                 # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
                 final_layer_output = self.final_layer(sequence_features, c)
+                print(final_layer_output.shape, 'final_layer_output')
 
                 # --- Manually Unpatchify ---
                 # B = batch size
@@ -1020,12 +1031,13 @@ class PrestoGIGA(nn.Module):
 
                 # Reshape: [B, N, P * C_out] -> [B, N, P, C_out]
                 x_reshaped = final_layer_output.view(B, N, P, C_out)
+                print(x_reshaped.shape, 'x_reshaped')
                 # Permute: [B, N, P, C_out] -> [B, C_out, N, P]
-                x_permuted = x_reshaped.permute(0, 3, 1, 2)
+                x_permuted = x_reshaped.permute(0, 1, 2, 3)
                 # Reshape: [B, C_out, N, P] -> [B, C_out, N * P] (where N * P = T, the original sequence length)
-                diffusion_out_unpatchified = x_permuted.reshape(B, C_out, N * P)
+                diffusion_out_unpatchified = x_permuted.reshape(B, N * P, C_out)
                 # --------------------------
-
+                print(diffusion_out_unpatchified.shape, 'diffusion_out_unpatchified')
                 output["diffusion_output"] = diffusion_out_unpatchified # Store the unpatchified output
 
             # 3. Grasp Prediction (if mode requires it and inputs available)
@@ -1034,6 +1046,7 @@ class PrestoGIGA(nn.Module):
                      model_logger.info("Warning: Grasp prediction requested but model cfg.use_grasp is False.")
                 else:
                      qual, rot, width = self.forward_grasp(tsdf_features, p)
+                     print(qual.shape, rot.shape, width.shape, 'qual, rot, width')
                      output["qual"] = qual
                      output["rot"] = rot
                      output["width"] = width
@@ -1224,4 +1237,3 @@ def predict_grasp_volumes(model, tsdf, resolution=40, device=None):
     width = results["width"].view(resolution, resolution, resolution, 1)
     
     return qual, rot, width, query_points.view(resolution, resolution, resolution, 3)
-

@@ -275,7 +275,7 @@ def train_loop(
 
             # Extract ground truth data from batch
             # Transpose immediately to [B, C, T] format for diffusion
-            true_action_ds = batch['trajectory'].swapaxes(-1, -2) # Shape: [B, Obs, Seq] -> [B, C, T]
+            true_action_ds = batch['trajectory'] # Shape: [B, Obs, Seq] -> [B, C, T]
             cond_data = batch['env-label']   # Shape: [B, Cond]
             tsdf_grid = batch['tsdf']        # Shape: [B, 1, D, D, D]
             grasp_query_points = batch['grasp_query_points'] # Shape: [B, N_grasp, 3]
@@ -293,10 +293,17 @@ def train_loop(
                 0, diff_step_max,
                 (batch_size,), device=device
             ).long()
-            # Create noise with the same shape, device, and dtype as the target tensor
+
             noise = th.randn_like(true_action_ds)
 
             noisy_actions = sched.add_noise(true_action_ds, noise, steps)
+            
+            logging.info(f"  True actions shape: {true_action_ds[0][0]}, "
+                         f"range: [{true_action_ds.min().item():.4f}, {true_action_ds.max().item():.4f}]")
+            logging.info(f"  Noise shape: {noise[0][0]}, "
+                         f"range: [{noise.min().item():.4f}, {noise.max().item():.4f}]")
+            logging.info(f"  Noisy actions shape: {noisy_actions[0][0]}, "
+                         f"range: [{noisy_actions.min().item():.4f}, {noisy_actions.max().item():.4f}]")
 
             # Log diffusion steps and noise
             if batch_idx == 0:  # Log only for first batch each epoch to avoid spamming
@@ -308,7 +315,7 @@ def train_loop(
             # --- Model Forward Pass ---
             with th.cuda.amp.autocast(enabled=use_amp):
                 # Transpose noisy_actions from [B, C, T] to [B, T, C] for the model's PatchEmbed
-                model_input_sample = noisy_actions.swapaxes(-1, -2)
+                model_input_sample = noisy_actions
                 model_output = model(
                     sample=model_input_sample, # Pass the transposed tensor
                     timestep=steps,
@@ -785,7 +792,7 @@ def train(
 
     model_config = {
          'input_size': seq_len,
-         'patch_size': 10,      # Example patch size
+         'patch_size': 2,      # Example patch size
          'in_channels': obs_dim,
          'hidden_size': model_hidden_size,
          'num_layer': model_depth,
@@ -1022,7 +1029,7 @@ if __name__ == '__main__':
         num_tsdf_points=32,
 
         # Simplified model arch for faster testing
-        model_depth=6,
+        model_depth=12,
         model_num_heads=4,
         model_hidden_size=256,
 
