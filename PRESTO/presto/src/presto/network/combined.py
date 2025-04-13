@@ -442,53 +442,6 @@ class TSDFEmbedder(nn.Module):
         return x
 
 
-class FeatureExtractor(nn.Module):
-    """Module to extract features at 3D positions from transformer features"""
-    def __init__(self, hidden_size: int, output_dim: int = None, use_mlp: bool = True):
-        super().__init__()
-        self.hidden_size = hidden_size
-        self.output_dim = output_dim or hidden_size
-        self.use_mlp = use_mlp
-        
-        if use_mlp:
-            self.mlp = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size),
-                nn.SiLU(),
-                nn.Linear(hidden_size, self.output_dim)
-            )
-            
-    def forward(self, features, positions, grid_size=40):
-        """
-        Extract features at arbitrary 3D positions from transformer features
-        
-        Args:
-            features: [B, N, D] transformer features
-            positions: [B, M, 3] query positions in normalized coordinates [-0.5, 0.5]
-            grid_size: size of the voxel grid
-        
-        Returns:
-            [B, M, output_dim] features at query positions
-        """
-        batch_size, num_patches, hidden_size = features.shape
-        batch_size_q, num_queries, _ = positions.shape
-        
-        positions = (positions + 0.5) * grid_size
-        
-        positions = positions.long()
-        
-        flat_indices = positions[:, :, 0] * grid_size * grid_size + positions[:, :, 1] * grid_size + positions[:, :, 2]
-        
-        flat_indices = torch.clamp(flat_indices, 0, num_patches - 1)
-        
-        batch_indices = torch.arange(batch_size_q, device=features.device)[:, None].expand(-1, num_queries)
-        extracted_features = features[batch_indices.flatten(), flat_indices.flatten()].view(batch_size_q, num_queries, hidden_size)
-        
-        if self.use_mlp:
-            extracted_features = self.mlp(extracted_features)
-            
-        return extracted_features
-
-
 class PrestoGIGA(nn.Module):
     """
     Unified model that combines PRESTO's diffusion transformer with GIGA's grasp affordance prediction
@@ -551,7 +504,7 @@ class PrestoGIGA(nn.Module):
         self._init_diffusion()
         self._init_grasp()
         
-        self.feature_extractor = FeatureExtractor(cfg.hidden_size, output_dim=cfg.c_dim)
+       
         
     def _init_diffusion(self):
         """Initialize diffusion model components from PRESTO"""
@@ -746,6 +699,7 @@ class PrestoGIGA(nn.Module):
             # Ensure pos_embed is initialized if needed (moved from original code block)
             print(x.shape, 'x')
             if not hasattr(self, 'pos_embed') or self.pos_embed is None:
+                 print("valid")
                  self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
                  pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
                  self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
@@ -762,6 +716,7 @@ class PrestoGIGA(nn.Module):
             if self.tsdf_encoder is not None:
                 # tsdf_encoder now returns a dictionary of features (planes or grid)
                 tsdf_features = self.tsdf_encoder(tsdf) # e.g., {'xy': [B,C,H,W], 'xz': [B,C,H,W], 'yz': [B,C,H,W]}
+                print(self.tsdf_encoder, 'tsdf_encoder')
                 print(tsdf_features['xz'].shape, 'tsdf_features')
                 # Pass the dictionary directly to the embedder
                 tsdf_embed = self.tsdf_embedder(tsdf_features) # Expects dict, outputs [B, hidden_size]
@@ -973,6 +928,7 @@ class PrestoGIGA(nn.Module):
                 num_extra_tokens = 1 if (tsdf is not None and self.cfg.use_joint_embeddings) else 0
 
                 # Apply transformer blocks
+                print(len(self.blocks), 'len(self.blocks)')
                 for block in self.blocks:
                      features = block.forward(features, c) # features shape [B, N+num_extra, D]
 
@@ -1056,7 +1012,9 @@ class PrestoGIGA(nn.Module):
         if not return_dict:
             return tuple(output.values())
         else:
+            print(output.keys(), "output")
             return output
+    
 
     def grad_refine(self, tsdf, pos, bound_value=0.0125, lr=1e-6, num_step=1):
         """

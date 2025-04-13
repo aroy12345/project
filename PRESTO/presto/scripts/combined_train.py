@@ -574,6 +574,62 @@ def train_loop(
             if batch_idx % 10 == 0:
                 logging.info(f"  Optimizer step complete, current LR: {optimizer.param_groups[0]['lr']:.6e}")
 
+            # --- Gradient Inspection ---
+            if batch_idx % 50 == 0: # Check gradients periodically (e.g., every 50 batches)
+                logging.info(f"--- Gradient Check @ Epoch {epoch+1}, Batch {batch_idx} ---")
+                found_grads = {}
+                zero_grads = {}
+                none_grads = {}
+                max_grads = {}
+                avg_grads = {}
+
+                total_params = 0
+                params_with_grad = 0
+
+                for name, param in model.named_parameters():
+                    if param.requires_grad: # Only check parameters that require gradients
+                        total_params += 1
+                        if param.grad is not None:
+                            params_with_grad += 1
+                            grad_norm = param.grad.norm().item()
+                            is_zero = (param.grad == 0).all().item()
+                            component_name = name.split('.')[0] # Get top-level module name (e.g., 'tsdf_encoder', 'blocks', 'decoder_qual')
+
+                            if component_name not in found_grads:
+                                found_grads[component_name] = []
+                                zero_grads[component_name] = []
+                                max_grads[component_name] = 0.0
+                                avg_grads[component_name] = []
+
+                            found_grads[component_name].append(name)
+                            avg_grads[component_name].append(grad_norm)
+                            max_grads[component_name] = max(max_grads[component_name], grad_norm)
+
+                            if is_zero:
+                                zero_grads[component_name].append(name)
+                                logging.warning(f"  ZERO GRADIENT detected for: {name}")
+
+                        else:
+                            component_name = name.split('.')[0]
+                            if component_name not in none_grads:
+                                none_grads[component_name] = []
+                            none_grads[component_name].append(name)
+                            logging.warning(f"  NO GRADIENT (None) detected for: {name}")
+
+                logging.info(f"  Total Trainable Params: {total_params}, Params with Gradients: {params_with_grad}")
+
+                logging.info("  --- Gradient Stats by Component ---")
+                all_components = set(found_grads.keys()) | set(none_grads.keys())
+                for comp in sorted(list(all_components)):
+                    num_found = len(found_grads.get(comp, []))
+                    num_zero = len(zero_grads.get(comp, []))
+                    num_none = len(none_grads.get(comp, []))
+                    max_g = max_grads.get(comp, 0.0)
+                    avg_g = sum(avg_grads.get(comp, [])) / num_found if num_found > 0 else 0.0
+                    logging.info(f"    {comp}: Found={num_found}, Zero={num_zero}, None={num_none}, AvgNorm={avg_g:.4e}, MaxNorm={max_g:.4e}")
+
+                logging.info(f"--- End Gradient Check ---")
+
 
         # --- End of Epoch ---
         avg_epoch_loss = epoch_total_loss / num_batches
