@@ -95,12 +95,24 @@ class LocalVoxelEncoder(nn.Module):
             self.conv_in = nn.Conv3d(1, c_dim, kernel_size, padding=1)
 
         if unet:
-            self.unet = UNet(c_dim, in_channels=c_dim, **unet_kwargs)
+            # Convert unet_kwargs namespace to dict before unpacking
+            if unet_kwargs is not None:
+                 unet_kwargs_dict = vars(unet_kwargs)
+                 print(unet_kwargs_dict)
+            else:
+                 unet_kwargs_dict = {} # Handle case where it might be None
+            self.unet = UNet(**unet_kwargs_dict) 
         else:
             self.unet = None
 
         if unet3d:
-            self.unet3d = UNet3D(**unet3d_kwargs)
+            print(unet3d_kwargs)
+            # Also apply the fix here if unet3d_kwargs could be a namespace
+            if unet3d_kwargs is not None:
+                unet3d_kwargs_dict = vars(unet3d_kwargs)
+            else:
+                unet3d_kwargs_dict = {}
+            self.unet3d = UNet3D(**unet3d_kwargs_dict)
         else:
             self.unet3d = None
 
@@ -485,7 +497,7 @@ class PrestoGIGA(nn.Module):
         
         encoder_type: Optional[str] = 'voxel_simple_local'
         encoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-            'plane_type': ['grid'],
+            'plane_type': ['xy', 'xz', 'yz'],
             'plane_resolution': 40,
             'grid_resolution': 32,
             'unet': True,
@@ -972,7 +984,6 @@ class PrestoGIGA(nn.Module):
 
             # 2. Diffusion Prediction (if mode requires it)
             if mode in ["diffusion", "joint"] and sample is not None:
-    
                 output["diffusion_output"] = self.forward_diffusion(sample, timestep, class_labels, tsdf, mode)
 
             # 3. Grasp Prediction (if mode requires it and inputs available)

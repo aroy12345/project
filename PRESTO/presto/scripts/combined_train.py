@@ -34,82 +34,32 @@ from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers import DDIMScheduler, DDPMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 
-# Assuming data_temp.py is in the same directory or accessible via PYTHONPATH
-try:
-    from data_temp import generate_dummy_datapoint, create_batch_from_datapoints
-except ImportError:
-    print("Error: Could not import from data_temp.py. Make sure it's accessible.")
-    # Define dummy functions if import fails, to allow script structure analysis
-    def generate_dummy_datapoint(**kwargs): return {}
-    def create_batch_from_datapoints(datapoints, device): return {}
 
 
-# Assuming franka_util provides the fk function
-try:
-    from presto.data.franka_util import franka_fk
-except ImportError:
-    print("Warning: Could not import franka_fk. Using placeholder.")
-    def franka_fk(q):
-        # Placeholder: returns zeros matching expected output shape [B, S, 3]
-        return th.zeros(q.shape[0], q.shape[1], 3, device=q.device)
+from data_temp import generate_dummy_datapoint, create_batch_from_datapoints
 
-# Assuming network factory provides the model
+
+
+from presto.data.franka_util import franka_fk
+
 from presto.network.combined import PrestoGIGA
-# Assuming network factory provides scheduler getter
 from presto.network.factory import get_scheduler, DiffusionConfig, ModelConfig
 
-# Assuming diffusion utils are available
+
 from presto.diffusion.util import pred_x0, diffusion_loss
 
-# Assuming cost functions are available
-try:
-    from presto.cost.curobo_cost import CuroboCost
-    # Add imports for cached cost components
-    from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
-except ImportError:
-    print("Warning: CuroboCost or CachedCuroboCost components not found. Collision/Distance losses and reweighting will be disabled.")
-    CuroboCost = None
-    CachedCuroboCost = None
-    # Define a placeholder if the specific function is missing
-    def cached_curobo_cost_with_ng(u_pred_sd, cost_fn_lambda):
-        print("Warning: cached_curobo_cost_with_ng not available. Returning 0.0")
-        # Return a tensor to avoid downstream errors
-        return th.tensor(0.0, device=u_pred_sd.device)
-
-# Assuming normalization utils are available
-try:
-    from presto.data.normalize import Normalize
-except ImportError:
-    print("Warning: Normalize not found. Using placeholder identity normalization.")
-    class Normalize: # Basic placeholder
-        def __init__(self, mean, std, device='cpu'):
-            self.mean = th.tensor(mean, device=device, dtype=th.float32)
-            self.std = th.tensor(std, device=device, dtype=th.float32)
-            self.device = device
-        def __call__(self, x): return (x - self.mean) / self.std
-        def unnormalize(self, x): return x * self.std + self.mean
-        def to(self, device):
-            self.mean = self.mean.to(device)
-            self.std = self.std.to(device)
-            self.device = device
-            return self
-        @classmethod
-        def identity(cls, dim, device='cpu'):
-            return cls(mean=th.zeros(dim), std=th.ones(dim), device=device)
 
 
-# Assuming checkpointing utils are available
+from presto.cost.curobo_cost import CuroboCost
+from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
+from presto.data.normalize import Normalize
+
 from presto.util.ckpt import (load_ckpt, save_ckpt, last_ckpt)
-# Assuming path utils are available (using basic os.path now)
-# from presto.util.path import RunPath
+
 import datetime
 
-# Assuming logger utils are available
-try:
-    from presto.util.wandb_logger import WandbLogger
-except ImportError:
-    print("Warning: WandbLogger not found. Logging will be printed to console.")
-    WandbLogger = None
+from presto.util.wandb_logger import WandbLogger
+
 
 
 
@@ -868,13 +818,15 @@ def train(
              'plane_resolution': giga_plane_resolution,
              # --- Keep other encoder settings ---
              'grid_resolution': tsdf_dim, # Keep grid_resolution if encoder needs it internally
-             'unet3d': False, # Example
-             'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim}, # Example
-             'unet': False, # Add unet flag if LocalVoxelEncoder uses it for planes
-             'unet_kwargs': {}, # Add unet kwargs if needed
+             'unet3d': True, # Example
+             'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim, "in_channels" : 7, "out_channels" : 7}, # Example
+             'unet': True, # Add unet flag if LocalVoxelEncoder uses it for planes
+             'unet_kwargs': { 'depth': 3,
+                'merge_mode': 'concat',
+                'start_filts': 32, "num_classes" : 2}, # Add unet kwargs if needed
          },
          'decoder': giga_decoder, # e.g., 'simple_local'
-         'decoder_kwargs': {'sample_mode': 'bilinear', 'hidden_size': 32},
+         'decoder_kwargs': {'dim': 3, 'sample_mode': 'bilinear', 'hidden_size': 32, 'concat_feat': True},
          'c_dim': giga_c_dim, # Feature dim from GIGA encoder *per plane*
          'padding': 0.1,
          'n_classes': 1, # For grasp quality
@@ -1087,7 +1039,7 @@ if __name__ == '__main__':
         # Simplified model arch for faster testing
         model_depth=12,
         model_num_heads=4,
-        model_hidden_size=256,
+        model_hidden_size=300,
 
         device_str="auto", # Use GPU if available
         use_amp=True,
