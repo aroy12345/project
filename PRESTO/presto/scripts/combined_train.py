@@ -316,7 +316,7 @@ def train_loop(
             with th.cuda.amp.autocast(enabled=use_amp):
                 # Transpose noisy_actions from [B, C, T] to [B, T, C] for the model's PatchEmbed
                 model_input_sample = noisy_actions
-                model_output = model(
+                model_output = model.forward(
                     sample=model_input_sample, # Pass the transposed tensor
                     timestep=steps,
                     class_labels=cond_data,

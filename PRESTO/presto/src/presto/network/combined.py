@@ -802,11 +802,11 @@ class PrestoGIGA(nn.Module):
         
         return features, c, tsdf_features
         
-    
-    def forward_grasp(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
+    def forward_grasp(self, sample, timestep, class_labels, tsdf, mode, positions):
         """
         Process features through grasp output heads using GIGA's decoder.
         """
+        features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
         model_logger.info(f"[PrestoGIGA.forward_grasp] Input shapes: positions={positions.shape}")
         model_logger.info(f"[PrestoGIGA.forward_grasp] tsdf_features keys: {list(tsdf_features.keys())}")
         
@@ -844,6 +844,56 @@ class PrestoGIGA(nn.Module):
               f"range: [{width.min().item():.4f}, {width.max().item():.4f}]")
         
         return qual, rot, width
+        
+    def forward_diffusion(self,
+                sample: Optional[torch.FloatTensor] = None,
+                timestep: Optional[Union[torch.Tensor, float, int]] = None,
+                class_labels: Optional[torch.Tensor] = None,
+                tsdf: Optional[torch.FloatTensor] = None,
+                mode: str = "joint", 
+                return_dict: bool = True):
+        """
+        Forward pass for diffusion model.
+        """
+        features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
+        if mode in ["diffusion", "joint"] and sample is not None:
+                # Process features through transformer blocks
+                # Note: features might now include an extra token for tsdf_embed
+                # Adjust FinalLayer input if necessary based on how features are structured
+                num_extra_tokens = 1 if (tsdf is not None and self.cfg.use_joint_embeddings) else 0
+
+                # Apply transformer blocks
+                print(len(self.blocks), 'len(self.blocks)')
+                for block in self.blocks:
+                     features = block.forward(features, c) # features shape [B, N+num_extra, D]
+
+                # Apply final layer for diffusion output
+                # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
+                sequence_features = features[:, :-num_extra_tokens, :] if num_extra_tokens > 0 else features
+                print(sequence_features.shape, 'sequence_features')
+                # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
+                final_layer_output = self.final_layer(sequence_features, c)
+                print(final_layer_output.shape, 'final_layer_output')
+
+                # --- Manually Unpatchify ---
+                # B = batch size
+                # N = num_sequence_patches
+                # P = patch_size
+                # C_out = output channels (self.out_dim, which is in_channels * 2 if learn_sigma else in_channels)
+                B, N, _ = final_layer_output.shape
+                P = self.x_embedder.patch_size
+                C_out = self.out_channels # Get the output channel dimension defined in __init__
+
+                # Reshape: [B, N, P * C_out] -> [B, N, P, C_out]
+                x_reshaped = final_layer_output.view(B, N, P, C_out)
+                print(x_reshaped.shape, 'x_reshaped')
+                # Permute: [B, N, P, C_out] -> [B, C_out, N, P]
+                x_permuted = x_reshaped.permute(0, 1, 2, 3)
+                # Reshape: [B, C_out, N, P] -> [B, C_out, N * P] (where N * P = T, the original sequence length)
+                diffusion_out_unpatchified = x_permuted.reshape(B, N * P, C_out)
+                # --------------------------
+                print(diffusion_out_unpatchified.shape, 'diffusion_out_unpatchified')
+                return diffusion_out_unpatchified
         
     def forward_tsdf(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
         """
@@ -918,54 +968,19 @@ class PrestoGIGA(nn.Module):
             # 1. Encode inputs and get shared features
             # Pass diffusion inputs (sample, timestep, class_labels) and TSDF input
             # encode_shared returns transformer features, conditioning, and raw tsdf encoder output dict
-            features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
+           
 
             # 2. Diffusion Prediction (if mode requires it)
             if mode in ["diffusion", "joint"] and sample is not None:
-                # Process features through transformer blocks
-                # Note: features might now include an extra token for tsdf_embed
-                # Adjust FinalLayer input if necessary based on how features are structured
-                num_extra_tokens = 1 if (tsdf is not None and self.cfg.use_joint_embeddings) else 0
-
-                # Apply transformer blocks
-                print(len(self.blocks), 'len(self.blocks)')
-                for block in self.blocks:
-                     features = block.forward(features, c) # features shape [B, N+num_extra, D]
-
-                # Apply final layer for diffusion output
-                # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
-                sequence_features = features[:, :-num_extra_tokens, :] if num_extra_tokens > 0 else features
-                print(sequence_features.shape, 'sequence_features')
-                # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
-                final_layer_output = self.final_layer(sequence_features, c)
-                print(final_layer_output.shape, 'final_layer_output')
-
-                # --- Manually Unpatchify ---
-                # B = batch size
-                # N = num_sequence_patches
-                # P = patch_size
-                # C_out = output channels (self.out_dim, which is in_channels * 2 if learn_sigma else in_channels)
-                B, N, _ = final_layer_output.shape
-                P = self.x_embedder.patch_size
-                C_out = self.out_channels # Get the output channel dimension defined in __init__
-
-                # Reshape: [B, N, P * C_out] -> [B, N, P, C_out]
-                x_reshaped = final_layer_output.view(B, N, P, C_out)
-                print(x_reshaped.shape, 'x_reshaped')
-                # Permute: [B, N, P, C_out] -> [B, C_out, N, P]
-                x_permuted = x_reshaped.permute(0, 1, 2, 3)
-                # Reshape: [B, C_out, N, P] -> [B, C_out, N * P] (where N * P = T, the original sequence length)
-                diffusion_out_unpatchified = x_permuted.reshape(B, N * P, C_out)
-                # --------------------------
-                print(diffusion_out_unpatchified.shape, 'diffusion_out_unpatchified')
-                output["diffusion_output"] = diffusion_out_unpatchified # Store the unpatchified output
+    
+                output["diffusion_output"] = self.forward_diffusion(sample, timestep, class_labels, tsdf, mode)
 
             # 3. Grasp Prediction (if mode requires it and inputs available)
-            if mode in ["grasp", "joint"] and tsdf_features is not None and p is not None:
+            if mode in ["grasp", "joint"] and p is not None:
                 if not self.cfg.use_grasp:
                      model_logger.info("Warning: Grasp prediction requested but model cfg.use_grasp is False.")
                 else:
-                     qual, rot, width = self.forward_grasp(tsdf_features, p)
+                     qual, rot, width = self.forward_grasp(sample, timestep, class_labels, tsdf, mode, p)
                      print(qual.shape, rot.shape, width.shape, 'qual, rot, width')
                      output["qual"] = qual
                      output["rot"] = rot
@@ -973,7 +988,7 @@ class PrestoGIGA(nn.Module):
 
             # 4. TSDF Prediction (if mode requires it and inputs available)
           
-            if mode in ["tsdf", "joint"] and tsdf_features is not None and p_tsdf is not None:
+            if mode in ["tsdf", "joint"] and p_tsdf is not None:
                  print('here!')
                  if not self.cfg.use_tsdf:
                      print('HERE!!!!')
@@ -982,32 +997,6 @@ class PrestoGIGA(nn.Module):
                      tsdf_pred = self.forward_tsdf(tsdf_features, p_tsdf)
                      print(tsdf_pred.shape, 'tsdf_pred')
                      output["tsdf_pred"] = tsdf_pred
-
-        # After encode_shared
-        model_logger.info(f"[PrestoGIGA.forward] After encode_shared: "
-              f"features={features.shape}, c={c.shape if c is not None else None}, "
-              f"tsdf_features has {len(tsdf_features) if tsdf_features else 0} keys")
-        
-        # After transformer blocks
-        model_logger.info(f"[PrestoGIGA.forward] After transformer blocks: features shape={features.shape}, "
-              f"range: [{features.min().item():.4f}, {features.max().item():.4f}]")
-        
-        # After final layer
-        if 'final_layer_output' in locals() and final_layer_output is not None:
-            model_logger.info(f"[PrestoGIGA.forward] Final layer output shape: {final_layer_output.shape}, "
-                  f"range: [{final_layer_output.min().item():.4f}, {final_layer_output.max().item():.4f}]")
-        
-        # After unpatchify
-        if 'diffusion_out_unpatchified' in locals() and diffusion_out_unpatchified is not None:
-            model_logger.info(f"[PrestoGIGA.forward] Diffusion output shape: {diffusion_out_unpatchified.shape}, "
-                  f"range: [{diffusion_out_unpatchified.min().item():.4f}, {diffusion_out_unpatchified.max().item():.4f}]")
-        
-        # At the end, summary of output
-        model_logger.info(f"[PrestoGIGA.forward] Output keys: {list(output.keys())}")
-        for k, v in output.items():
-            if isinstance(v, torch.Tensor):
-                model_logger.info(f"[PrestoGIGA.forward] Output '{k}' shape: {v.shape}, "
-                      f"range: [{v.min().item():.4f}, {v.max().item():.4f}]")
         
         if not return_dict:
             return tuple(output.values())
