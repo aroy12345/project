@@ -20,8 +20,10 @@ def diffusion_loss(preds: th.Tensor,
     """
     pred_type = sched.config.prediction_type
     if pred_type == 'epsilon':
+        print('epsilon')
         loss_ddpm = F.mse_loss(preds, noise, *args, **kwds)
     elif pred_type == 'sample':
+        print('sample')
         # loss_ddpm = F.mse_loss(preds, noisy_trajs - trajs)
         loss_ddpm = F.mse_loss(preds, trajs, *args, **kwds)
     elif pred_type == 'v_prediction':

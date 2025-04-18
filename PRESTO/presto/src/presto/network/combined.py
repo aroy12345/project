@@ -96,11 +96,7 @@ class LocalVoxelEncoder(nn.Module):
 
         if unet:
             # Convert unet_kwargs namespace to dict before unpacking
-            if unet_kwargs is not None:
-                 unet_kwargs_dict = vars(unet_kwargs)
-                 print(unet_kwargs_dict)
-            else:
-                 unet_kwargs_dict = {} # Handle case where it might be None
+            unet_kwargs_dict = unet_kwargs.copy() # Use .copy() as it's already a dict
             self.unet = UNet(**unet_kwargs_dict) 
         else:
             self.unet = None
@@ -199,7 +195,6 @@ class LocalVoxelEncoder(nn.Module):
         device = x.device
         # Use spatial dimensions (G, G, G) starting from index 2
         grid_res = x.shape[2:5] # Tuple (G, G, G)
-        n_voxel = grid_res[0] * grid_res[1] * grid_res[2] # G*G*G
 
         # Create coordinates for the GxGxG grid
         coord1 = torch.linspace(-0.5, 0.5, grid_res[0], device=device)
@@ -209,13 +204,13 @@ class LocalVoxelEncoder(nn.Module):
         # Create meshgrid and expand to batch size
         grid_coords = torch.stack(torch.meshgrid(coord1, coord2, coord3, indexing='ij'), dim=-1) # Shape [G, G, G, 3]
         p = grid_coords.unsqueeze(0).expand(batch_size, -1, -1, -1, -1) # Shape [B, G, G, G, 3]
-        p = p.reshape(batch_size, n_voxel, 3) # Shape [B, n_voxel, 3], e.g., [8, 32768, 3]
+        p = p.reshape(batch_size, grid_res[0] * grid_res[1] * grid_res[2], 3) # Shape [B, n_voxel, 3], e.g., [8, 32768, 3]
 
         # Acquire voxel-wise feature
         # conv_in expects [B, C_in, G, G, G] - input x is already in this format
         c = self.actvn(self.conv_in(x)) # Output shape [B, c_dim, G, G, G]
         # Flatten spatial dimensions G*G*G = n_voxel
-        c = c.view(batch_size, self.c_dim, n_voxel) # Shape [B, c_dim, n_voxel], e.g., [8, 32, 32768]
+        c = c.view(batch_size, self.c_dim, grid_res[0] * grid_res[1] * grid_res[2]) # Shape [B, c_dim, n_voxel], e.g., [8, 32, 32768]
         c = c.permute(0, 2, 1) # Shape [B, n_voxel, c_dim], e.g., [8, 32768, 32]
 
         fea = {}
@@ -442,6 +437,7 @@ class TSDFEmbedder(nn.Module):
              # Or raise an error:
              # raise ValueError(f"Input plane shape mismatch...")
 
+
         # Concatenate planes along the channel dimension
         x_cat = torch.cat([x_planes['xy'], x_planes['xz'], x_planes['yz']], dim=1) # Shape: [B, 3*C, H, W]
 
@@ -454,83 +450,285 @@ class TSDFEmbedder(nn.Module):
         return x
 
 
+# --- Base Config (Common Parameters) ---
+@dataclass
+class BaseModelConfig:
+    hidden_size: int = 256
+    padding: float = 0.1
+    # GIGA/Encoder related
+    encoder_type: Optional[str] = 'voxel_simple_local'
+    encoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
+        'plane_type': ['xy', 'xz', 'yz'],
+        'plane_resolution': 40,
+        'grid_resolution': 32,
+        'unet': True,
+        'unet3d': True,
+        'unet_kwargs': { 'depth': 3, 'merge_mode': 'concat', 'start_filts': 32 },
+        'c_dim': 32 # Added c_dim here for consistency
+    })
+    c_dim: int = 32 # Feature dim per plane from encoder
+    # Decoder related (used by GIGA, potentially indirectly by Presto via loaded GIGA)
+    decoder_type: str = 'simple_local'
+    decoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
+        'dim': 3, 'sample_mode': 'bilinear', 'hidden_size': 32, 'concat_feat': True
+    })
+    # Other shared params if any
+    use_amp: Optional[bool] = None
 
-class PrestoGIGA(nn.Module):
+
+# --- GIGA Model Config ---
+@dataclass
+class GIGAConfig(BaseModelConfig):
+    # GIGA specific parameters (if any beyond BaseModelConfig)
+    rot_dim: int = 4 # Example, adjust as needed
+    use_tsdf_pred: bool = True # Control TSDF prediction head
+
+
+# --- Presto Model Config ---
+@dataclass
+class PrestoConfig(BaseModelConfig):
+    # Diffusion specific parameters
+    input_size: int = 1000
+    patch_size: int = 20
+    in_channels: int = 7
+    num_layer: int = 4
+    num_heads: int = 16
+    mlp_ratio: float = 4.0
+    class_dropout_prob: float = 0.0
+    cond_dim: int = 104
+    learn_sigma: bool = True
+    use_cond: bool = True
+    use_pos_emb: bool = False
+    dim_pos_emb: int = 3 * 2 * 32
+    sin_emb_x: int = 0
+    cat_emb_x: bool = False
+    use_cond_token: bool = False
+    use_cloud: bool = False # Assuming this relates to input type, keep if needed
+    use_joint_embeddings: bool = True # Keep for conditioning diffusion on TSDF
+
+
+# --- GIGA Model ---
+class GIGA(nn.Module):
     """
-    Unified model that combines PRESTO's diffusion transformer with GIGA's grasp affordance prediction
+    GIGA model for grasp and TSDF affordance prediction.
+    Uses a TSDF encoder and multiple decoder heads.
     """
-    @dataclass
-    class Config:
-        input_size: int = 1000
-        patch_size: int = 20
-        in_channels: int = 7
-        hidden_size: int = 256
-        num_layer: int = 4
-        num_heads: int = 16
-        mlp_ratio: float = 4.0
-        class_dropout_prob: float = 0.0
-        cond_dim: int = 104
-        learn_sigma: bool = True
-        use_cond: bool = True
-        use_pos_emb: bool = False
-        dim_pos_emb: int = 3 * 2 * 32
-        sin_emb_x: int = 0
-        cat_emb_x: bool = False
-        use_cond_token: bool = False
-        use_cloud: bool = False
-        
-        grid_size: int = 40
-        c_dim: int = 32
-        use_grasp: bool = True
-        use_tsdf: bool = True
-        
-        decoder_type: str = 'simple_local'
-        decoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-            'dim': 3,
-            'sample_mode': 'bilinear',
-            'hidden_size': 32,
-            'concat_feat': True
-        })
-        padding: float = 0.1
-        
-        use_amp: Optional[bool] = None
-        use_joint_embeddings: bool = True
-        
-        encoder_type: Optional[str] = 'voxel_simple_local'
-        encoder_kwargs: Dict[str, Any] = field(default_factory=lambda: {
-            'plane_type': ['xy', 'xz', 'yz'],
-            'plane_resolution': 40,
-            'grid_resolution': 32,
-            'unet': True,
-            'unet3d': True,
-            'unet_kwargs': {
-                'depth': 3,
-                'merge_mode': 'concat',
-                'start_filts': 32
+    def __init__(self, config: GIGAConfig, **kwargs):
+        super().__init__()
+        self.cfg = config
+        self._init_encoder()
+        self._init_decoders()
+        self.apply(self._init_weights) # Apply weight initialization
+
+    def _init_encoder(self):
+        """Initialize the TSDF encoder."""
+        cfg = self.cfg
+        if cfg.encoder_type:
+            encoder_cls = encoder_dict[cfg.encoder_type]
+            # Ensure c_dim is passed correctly if needed by the encoder's kwargs handling
+            encoder_kwargs = cfg.encoder_kwargs.copy() # Use .copy() to avoid modifying the original config dict
+            if 'c_dim' not in encoder_kwargs:
+                 encoder_kwargs['c_dim'] = cfg.c_dim # Pass c_dim if not already in kwargs
+            self.tsdf_encoder = encoder_cls(
+                padding=cfg.padding,
+                **encoder_kwargs
+            )
+            print(f"Initialized GIGA TSDF Encoder: {cfg.encoder_type}")
+        else:
+            self.tsdf_encoder = None
+            print("Warning: GIGA model initialized without a TSDF encoder.")
+
+    def _init_decoders(self):
+        """Initialize the grasp and TSDF decoders."""
+        cfg = self.cfg
+        self.decoder_qual = None
+        self.decoder_rot = None
+        self.decoder_width = None
+        self.decoder_tsdf = None
+
+        if cfg.decoder_type and self.tsdf_encoder is not None: # Need encoder features
+            decoder_cls = decoder_dict[cfg.decoder_type]
+            # Use encoder's output feature dimension (c_dim) for decoder input
+            # Ensure decoder_kwargs correctly reflects the expected c_dim from the encoder
+            decoder_c_dim = cfg.c_dim # Assuming encoder output dim matches cfg.c_dim
+            common_decoder_kwargs = {
+                'dim': 3, # Spatial dimension
+                'c_dim': decoder_c_dim,
+                **cfg.decoder_kwargs.copy() # Use .copy() here as well if modifications might occur
             }
-        })
+            # Update c_dim in common_decoder_kwargs explicitly if it was changed in encoder_kwargs
+            common_decoder_kwargs['c_dim'] = self.tsdf_encoder.c_dim if hasattr(self.tsdf_encoder, 'c_dim') else cfg.c_dim
 
-    def __init__(self, cfg: Config):
+
+            # Grasp Decoders
+            self.decoder_qual = decoder_cls(out_dim=1, **common_decoder_kwargs)
+            self.decoder_rot = decoder_cls(out_dim=cfg.rot_dim, **common_decoder_kwargs)
+            self.decoder_width = decoder_cls(out_dim=1, **common_decoder_kwargs)
+            print(f"Initialized GIGA Grasp Decoders (Qual, Rot, Width) type: {cfg.decoder_type}")
+
+            # Optional TSDF Decoder
+            if cfg.use_tsdf_pred:
+                self.decoder_tsdf = decoder_cls(out_dim=1, **common_decoder_kwargs)
+                print(f"Initialized GIGA TSDF Decoder type: {cfg.decoder_type}")
+        elif not self.tsdf_encoder:
+             print("Warning: GIGA decoders not initialized because TSDF encoder is missing.")
+        else:
+             print(f"Warning: GIGA decoder type '{cfg.decoder_type}' not found or specified.")
+
+
+    def _init_weights(self, m):
+        """Initialize weights (same as original PrestoGIGA)."""
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, (nn.Conv2d, nn.Conv3d)): # Include Conv3d if encoder uses it
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+             if m.bias is not None:
+                 nn.init.constant_(m.bias, 0)
+             if m.weight is not None:
+                 nn.init.constant_(m.weight, 1.0)
+        # Initialize DiTBlock parameters if needed (often done within the block itself)
+
+    def encode_tsdf(self, tsdf: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Encodes the input TSDF volume using the tsdf_encoder.
+
+        Args:
+            tsdf: [B, 1, D, D, D] TSDF voxel grid.
+
+        Returns:
+            A dictionary containing the encoded features (e.g., feature planes).
+            Returns an empty dictionary if no encoder is present.
+        """
+        if self.tsdf_encoder is not None:
+            tsdf_features = self.tsdf_encoder(tsdf)
+            print(f"[GIGA.encode_tsdf] Input TSDF shape: {tsdf.shape}")
+            for k, v in tsdf_features.items():
+                 if isinstance(v, torch.Tensor):
+                     print(f"[GIGA.encode_tsdf] Output feature '{k}' shape: {v.shape}")
+            return tsdf_features
+        else:
+            print("[GIGA.encode_tsdf] No TSDF encoder available.")
+            return {}
+
+    def forward_affordance(self,
+                           tsdf_features: Dict[str, torch.Tensor],
+                           p_grasp: Optional[torch.Tensor] = None,
+                           p_tsdf: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """
+        Predicts grasp and/or TSDF affordances from encoded features and query points.
+
+        Args:
+            tsdf_features: Dictionary of encoded features from encode_tsdf.
+            p_grasp: [B, M, 3] query positions for grasp prediction.
+            p_tsdf: [B, N, 3] query positions for TSDF prediction.
+
+        Returns:
+            A dictionary containing the predicted affordances ('qual', 'rot', 'width', 'tsdf_pred').
+        """
+        output = {}
+
+        if not tsdf_features:
+            print("[GIGA.forward_affordance] Cannot predict affordances without TSDF features.")
+            return output # Return empty if no features
+
+        # Grasp predictions
+        if p_grasp is not None:
+            print(f"[GIGA.forward_affordance] Predicting grasp affordances for points shape: {p_grasp.shape}")
+            if self.decoder_qual is not None:
+                output['qual'] = self.decoder_qual(p_grasp, tsdf_features)
+                print(f"[GIGA.forward_affordance] Predicted qual shape: {output['qual'].shape}")
+            else:
+                print("[GIGA.forward_affordance] Grasp quality decoder not available.")
+
+            if self.decoder_rot is not None:
+                output['rot'] = self.decoder_rot(p_grasp, tsdf_features)
+                print(f"[GIGA.forward_affordance] Predicted rot shape: {output['rot'].shape}")
+            else:
+                print("[GIGA.forward_affordance] Grasp rotation decoder not available.")
+
+            if self.decoder_width is not None:
+                output['width'] = self.decoder_width(p_grasp, tsdf_features)
+                print(f"[GIGA.forward_affordance] Predicted width shape: {output['width'].shape}")
+            else:
+                print("[GIGA.forward_affordance] Grasp width decoder not available.")
+
+        # TSDF prediction
+        if p_tsdf is not None and self.cfg.use_tsdf_pred:
+            print(f"[GIGA.forward_affordance] Predicting TSDF for points shape: {p_tsdf.shape}")
+            if self.decoder_tsdf is not None:
+                output['tsdf_pred'] = self.decoder_tsdf(p_tsdf, tsdf_features)
+                print(f"[GIGA.forward_affordance] Predicted tsdf_pred shape: {output['tsdf_pred'].shape}")
+            else:
+                print("[GIGA.forward_affordance] TSDF prediction decoder not available.")
+        elif p_tsdf is not None and not self.cfg.use_tsdf_pred:
+             print("[GIGA.forward_affordance] TSDF prediction requested but use_tsdf_pred is False in config.")
+
+        print(self.decoder_qual, self.decoder_rot, self.decoder_width, self.decoder_tsdf)
+        return output
+
+    def forward(self,
+                tsdf: torch.Tensor,
+                p_grasp: Optional[torch.Tensor] = None,
+                p_tsdf: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        """
+        Main forward pass for the GIGA model. Encodes TSDF and predicts affordances.
+
+        Args:
+            tsdf: [B, 1, D, D, D] Input TSDF volume.
+            p_grasp: [B, M, 3] Query points for grasp prediction.
+            p_tsdf: [B, N, 3] Query points for TSDF prediction.
+
+        Returns:
+            Dictionary with affordance predictions.
+        """
+        tsdf_features = self.encode_tsdf(tsdf)
+        affordance_output = self.forward_affordance(tsdf_features, p_grasp, p_tsdf)
+
+        print(f"[GIGA.forward] Final output shape: {affordance_output['qual'].shape}")
+        print(f"[GIGA.forward] Final output shape: {affordance_output['rot'].shape}")
+        print(f"[GIGA.forward] Final output shape: {affordance_output['width'].shape}")
+        print(f"[GIGA.forward] Final output shape: {affordance_output['tsdf_pred'].shape}")
+        return affordance_output
+
+    @property
+    def device(self):
+        # Safely get device from encoder or first decoder
+        if self.tsdf_encoder is not None:
+            return next(iter(self.tsdf_encoder.parameters())).device
+        elif self.decoder_qual is not None:
+            return next(iter(self.decoder_qual.parameters())).device
+        else:
+            # Fallback or raise error if no parameters
+            try:
+                return next(iter(self.parameters())).device
+            except StopIteration:
+                 print("Warning: GIGA model has no parameters to determine device.")
+                 return torch.device("cpu") # Default fallback
+
+
+# --- Presto Model ---
+class Presto(nn.Module):
+    """
+    Presto diffusion model for trajectory prediction, conditioned on TSDF embedding.
+    """
+    def __init__(self, cfg: PrestoConfig):
         super().__init__()
         self.cfg = cfg
-        
-        self._init_diffusion()
-        self._init_grasp()
-        
-       
-        
-    def _init_diffusion(self):
-        """Initialize diffusion model components from PRESTO"""
-        cfg = self.cfg
-        
+
+        # --- Initialize Diffusion Components ---
         self.learn_sigma = cfg.learn_sigma
         self.in_channels = cfg.in_channels
         self.out_channels = cfg.in_channels * 2 if cfg.learn_sigma else cfg.in_channels
         self.patch_size = cfg.patch_size
         self.num_heads = cfg.num_heads
         self.use_cond = cfg.use_cond
-        self.use_cond_token = cfg.use_cond_token
-        
+        self.use_cond_token = cfg.use_cond_token # Keep if DiTBlock uses it
+
         self.x_embedder = PatchEmbed(
             cfg.input_size, cfg.in_channels,
             cfg.patch_size, cfg.hidden_size,
@@ -538,7 +736,7 @@ class PrestoGIGA(nn.Module):
             cat=cfg.cat_emb_x
         )
         self.t_embedder = TimestepEmbedder(cfg.hidden_size)
-        
+
         if self.use_cond:
             if cfg.use_pos_emb:
                 self.y_embedder = nn.Sequential(
@@ -548,619 +746,300 @@ class PrestoGIGA(nn.Module):
             else:
                 self.y_embedder = CondEmbedder(
                     cfg.cond_dim, cfg.hidden_size, cfg.class_dropout_prob)
-        
-        num_patches = self.x_embedder.num_patches
-        
-        self.register_buffer('pos_embed',
-                            torch.zeros(num_patches, cfg.hidden_size),
-                            persistent=False)
-                            
-        if cfg.encoder_type:
-            self.tsdf_encoder = encoder_dict[cfg.encoder_type](
-                padding=cfg.padding,
-                **vars(cfg.encoder_kwargs)
-            )
         else:
-            self.tsdf_encoder = None
-        
-        self.tsdf_embedder = TSDFEmbedder(cfg.hidden_size, cfg.c_dim)
-        
+            self.y_embedder = None # Handle case where conditioning is off
+
+        num_patches = self.x_embedder.num_patches
+        # Initialize pos_embed buffer (will be filled later or loaded)
+        self.register_buffer('pos_embed', torch.zeros(1, num_patches, cfg.hidden_size), persistent=False)
+
+
+        # --- Initialize TSDF Encoder and Embedder (for conditioning) ---
+        self.tsdf_encoder = None
+        self.tsdf_embedder = None
+        if cfg.encoder_type:
+            encoder_cls = encoder_dict[cfg.encoder_type]
+            # Ensure c_dim is passed correctly if needed by the encoder's kwargs handling
+            encoder_kwargs = cfg.encoder_kwargs.copy() # Use .copy() to avoid modifying the original config dict
+            if 'c_dim' not in encoder_kwargs:
+                 encoder_kwargs['c_dim'] = cfg.c_dim # Pass c_dim if not already in kwargs
+            self.tsdf_encoder = encoder_cls(
+                padding=cfg.padding,
+                **encoder_kwargs
+            )
+            # Determine the input resolution for the TSDF embedder from encoder config
+            # Default to a reasonable value if not found
+            tsdf_embedder_resolution = cfg.encoder_kwargs.get('plane_resolution', 32)
+            self.tsdf_embedder = TSDFEmbedder(
+                hidden_size=cfg.hidden_size,
+                c_dim=cfg.c_dim, # Use the base c_dim config
+                input_resolution=tsdf_embedder_resolution
+            )
+            print(f"Initialized Presto TSDF Encoder: {cfg.encoder_type}")
+            print(f"Initialized Presto TSDF Embedder with input resolution: {tsdf_embedder_resolution}")
+        else:
+            print("Warning: Presto model initialized without TSDF encoder/embedder. Cannot use TSDF conditioning.")
+
+
+        # --- Initialize Transformer Blocks ---
         self.blocks = nn.ModuleList([
             DiTBlock(
                 cfg.hidden_size, cfg.num_heads,
                 mlp_ratio=cfg.mlp_ratio,
-                use_cond=True
+                use_cond=True # DiTBlock expects conditioning signal 'c'
             )
             for _ in range(cfg.num_layer)
         ])
-        
+
+        # --- Initialize Final Layer ---
         self.final_layer = FinalLayer(cfg.hidden_size, cfg.patch_size, self.out_channels)
-        
-    def _init_grasp(self):
-        """Initialize GIGA components (encoder, decoder, embedder)"""
-        cfg = self.cfg # Use local cfg for brevity
 
-        # Initialize rotation representation (used for decoder out_dim)
-        self.rot_dim = 4 # Example: 6D rotation representation
+        self.apply(self._init_weights) # Apply weight initialization
+        self._initialize_pos_embed() # Initialize positional embedding weights
 
-        if cfg.encoder_type:
-            # Instantiate the TSDF/Voxel Encoder
-            encoder_cls = encoder_dict[cfg.encoder_type]
-            self.tsdf_encoder = encoder_cls(
-                padding=cfg.padding,
-                **vars(cfg.encoder_kwargs)
-            )
-        else:
-            self.tsdf_encoder = None
 
-        # Instantiate the TSDF Embedder (for conditioning DiT)
-        self.tsdf_embedder = TSDFEmbedder(
-            hidden_size=cfg.hidden_size,
-            c_dim=cfg.c_dim
-        )
-
-        # --- MODIFIED DECODER INITIALIZATION ---
-        self.decoder_qual = None
-        self.decoder_rot = None
-        self.decoder_width = None
-        self.decoder_tsdf = None # Optional: if you predict TSDF too
-
-        if cfg.decoder_type and (cfg.use_grasp or cfg.use_tsdf):
-            decoder_cls = decoder_dict[cfg.decoder_type]
-
-            # Common arguments for all decoders
-            common_decoder_kwargs = {
-                'dim': 3,
-                'c_dim': cfg.c_dim,
-                **vars(cfg.decoder_kwargs) # Unpack specific decoder args
-            }
-
-            if cfg.use_grasp:
-                # Decoder for Quality (output dim 1)
-                self.decoder_qual = decoder_cls(
-                    out_dim=1,
-                    **common_decoder_kwargs
-                )
-                # Decoder for Rotation (output dim self.rot_dim)
-                self.decoder_rot = decoder_cls(
-                    out_dim=self.rot_dim,
-                    **common_decoder_kwargs
-                )
-                # Decoder for Width (output dim 1)
-                self.decoder_width = decoder_cls(
-                    out_dim=1,
-                    **common_decoder_kwargs
-                )
-
-            if cfg.use_tsdf:
-                 # Optional: Decoder for TSDF prediction (output dim 1)
-                 self.decoder_tsdf = decoder_cls(
-                     out_dim=1,
-                     **common_decoder_kwargs
-                 )
-        # --- END MODIFIED DECODER INITIALIZATION ---
-
-        # Remove the single self.decoder initialization if it exists elsewhere
-        # if hasattr(self, 'decoder'):
-        #     del self.decoder
-
-        self.apply(self._init_weights)
-        
     def _init_weights(self, m):
-        """Initialize weights for linear and conv layers"""
+        """Initialize weights (same as original PrestoGIGA)."""
         if isinstance(m, nn.Linear):
-            # Use Xavier uniform initialization for linear layers
             nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
-        elif isinstance(m, (nn.Conv2d, nn.Conv3d)): # Assuming 3D convs might also be used
-            # Use Kaiming normal initialization for conv layers
+        elif isinstance(m, (nn.Conv2d, nn.Conv3d)): # Include Conv3d if encoder uses it
             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-            if m.weight is not None:
-                nn.init.constant_(m.weight, 1.0)
+             if m.bias is not None:
+                 nn.init.constant_(m.bias, 0)
+             if m.weight is not None:
+                 nn.init.constant_(m.weight, 1.0)
+        # Initialize DiTBlock parameters if needed (often done within the block itself)
 
-    def get_num_patches(self, x_shape):
-        return x_shape[-1] // self.patch_size
 
-    def set_pos_embed(self, grid_size):
+    def _initialize_pos_embed(self):
+        """Initialize the positional embedding buffer."""
+        if hasattr(self, 'pos_embed') and self.pos_embed is not None:
+             print("Initializing Presto positional embeddings...")
+             pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
+             self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
+             print(f"Positional embedding initialized with shape: {self.pos_embed.shape}")
+
+
+    def encode_shared(self,
+                      x: Optional[torch.Tensor] = None,
+                      tsdf: Optional[torch.Tensor] = None,
+                      t: Optional[torch.Tensor] = None,
+                      y: Optional[torch.Tensor] = None) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[Dict[str, torch.Tensor]]]:
         """
-        Set positional embedding buffer
-        """
-        pos_embed = get_1d_sincos_pos_embed(
-            self.cfg.hidden_size, grid_size, cls_token=False)
-        self.pos_embed = torch.from_numpy(pos_embed).float().to(self.device)
-            
-    def unpatchify(self, x):
-        """
-        x: (N, T, patch_size**2 * C)
-        imgs: (N, H, W, C)
-        """
-        c = self.out_channels
-        p = self.x_embedder.patch_size
-        x = einops.rearrange(x, '... s (p c) -> ... c (s p)',
-                             c=self.out_channels)
-        return x
-        
-    def encode_shared(self, x=None, tsdf=None, t=None, y=None):
-        """
-        Create a shared representation from either or both diffusion and TSDF inputs
+        Encodes inputs (sequence, TSDF, time, condition) into features for DiT blocks.
 
         Args:
-            x: [B, C, T] sequence data for diffusion
-            tsdf: [B, 1, D, D, D] TSDF voxel grid (input to encoder)
-            t: diffusion timesteps
-            y: conditioning variables
+            x: [B, C_in, T] sequence data.
+            tsdf: [B, 1, D, D, D] TSDF voxel grid.
+            t: [B] diffusion timesteps.
+            y: [B, cond_dim] conditioning variables.
 
         Returns:
-            features: [B, N, D] transformer features
-            c: [B, D] conditioning embedding
-            tsdf_features: Dictionary containing output features from tsdf_encoder (e.g., {'xy': ..., 'xz': ..., 'yz': ...})
-                           or None if tsdf is None.
+            features: [B, N_seq + N_tsdf_token, D_hidden] Combined features for DiT blocks.
+            c: [B, D_hidden] Combined conditioning vector for DiT blocks.
+            tsdf_features: Dictionary from tsdf_encoder (passed through for potential use).
         """
-        model_logger.info(f"[PrestoGIGA.encode_shared] Input shapes: x={x.shape if x is not None else None}, "
+        print(f"[Presto.encode_shared] Input shapes: x={x.shape if x is not None else None}, "
               f"tsdf={tsdf.shape if tsdf is not None else None}, "
               f"t={t.shape if t is not None else None}, "
               f"y={y.shape if y is not None else None}")
-        
+
+        # 1. Sequence Embedding (if x is provided)
+        x_embed = None
         if x is not None:
-            # Ensure pos_embed is initialized if needed (moved from original code block)
-            print(x.shape, 'x')
-            if not hasattr(self, 'pos_embed') or self.pos_embed is None:
-                 print("valid")
-                 self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
-                 pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
-                 self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
+            # Ensure pos_embed is correctly initialized and on the right device
+            if self.pos_embed is None or self.pos_embed.shape[1] != self.x_embedder.num_patches:
+                 print("Re-initializing positional embedding in encode_shared.")
+                 self._initialize_pos_embed() # Re-initialize if needed
 
-            x_embed = self.x_embedder(x) + self.pos_embed
-            print(x_embed.shape, 'x_embed')
+            # Add positional embedding
+            # Ensure pos_embed is on the same device as x
+            current_pos_embed = self.pos_embed.to(x.device)
+            x_embed = self.x_embedder(x) + current_pos_embed
+            print(f"[Presto.encode_shared] x_embed shape: {x_embed.shape}")
         else:
-            x_embed = None
+             print("[Presto.encode_shared] No sequence input (x) provided.")
 
-        tsdf_embed = None
-        tsdf_features = None # Initialize tsdf_features
 
-        if tsdf is not None:
-            if self.tsdf_encoder is not None:
-                # tsdf_encoder now returns a dictionary of features (planes or grid)
-                tsdf_features = self.tsdf_encoder(tsdf) # e.g., {'xy': [B,C,H,W], 'xz': [B,C,H,W], 'yz': [B,C,H,W]}
-                print(self.tsdf_encoder, 'tsdf_encoder')
-                print(tsdf_features.keys(), 'tsdf_features_keys')
-                print(tsdf_features['xz'].shape, 'tsdf_features')
-                # Pass the dictionary directly to the embedder
-                tsdf_embed = self.tsdf_embedder(tsdf_features) # Expects dict, outputs [B, hidden_size]
-                tsdf_embed = tsdf_embed.unsqueeze(1) # Shape: [B, 1, hidden_size]
-                print(tsdf_embed.shape, 'tsdf_embed')
-            else:
-                # Handle case where there's no encoder but tsdf is provided (unlikely for this setup)
-                model_logger.info("Warning: TSDF provided but no tsdf_encoder defined.")
-                # tsdf_embed remains None
+        # 2. TSDF Embedding (if tsdf is provided and encoder/embedder exist)
+        tsdf_embed_token = None
+        tsdf_features = None
+        if tsdf is not None and self.tsdf_encoder is not None and self.tsdf_embedder is not None:
+            print("[Presto.encode_shared] Encoding TSDF...")
+            tsdf_features = self.tsdf_encoder(tsdf) # Dict of planes, e.g., {'xy': [B,C,H,W], ...}
+            print(f"[Presto.encode_shared] TSDF encoder output keys: {list(tsdf_features.keys())}")
+            # Pass the dictionary directly to the embedder
+            tsdf_embed = self.tsdf_embedder(tsdf_features) # Outputs [B, hidden_size]
+            tsdf_embed_token = tsdf_embed.unsqueeze(1) # Shape: [B, 1, hidden_size]
+            print(f"[Presto.encode_shared] tsdf_embed_token shape: {tsdf_embed_token.shape}")
+        elif tsdf is not None:
+            print("[Presto.encode_shared] TSDF input provided but encoder/embedder missing.")
 
-        # Create combined features for the transformer blocks
-        if x_embed is not None and tsdf_embed is not None and self.cfg.use_joint_embeddings:
+
+        # 3. Combine Features for Transformer
+        features = None
+        num_extra_tokens = 0
+        if x_embed is not None and tsdf_embed_token is not None and self.cfg.use_joint_embeddings:
             # Concatenate sequence embedding and the single TSDF embedding token
-            model_logger.info('Concatenating x_embed and tsdf_embed for joint embeddings')
-            features = torch.cat([x_embed, tsdf_embed], dim=1)
-            print(features.shape, 'features')
+            features = torch.cat([x_embed, tsdf_embed_token], dim=1)
+            num_extra_tokens = 1
+            print(f"[Presto.encode_shared] Concatenated x_embed and tsdf_embed_token. Features shape: {features.shape}")
         elif x_embed is not None:
             features = x_embed
-        elif tsdf_embed is not None:
-            # If only TSDF is provided, expand its embedding to match sequence length expectations
-            # Ensure pos_embed is initialized if needed (as above)
-            if not hasattr(self, 'pos_embed') or self.pos_embed is None:
-                 self.pos_embed = nn.Parameter(torch.zeros(1, self.x_embedder.num_patches, self.cfg.hidden_size), requires_grad=False)
-                 pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
-                 self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
-
-            # Expand the single TSDF embedding token across the sequence dimension
-            # Note: This assumes the transformer expects a sequence. Adjust if architecture changes.
-            # We might need a different way to handle TSDF-only input depending on the transformer design.
-            # For now, replicate the TSDF embedding and add positional encoding.
-            features = tsdf_embed.expand(-1, self.x_embedder.num_patches, -1)
-            features = features + self.pos_embed # Add positional encoding
+            print(f"[Presto.encode_shared] Using only x_embed. Features shape: {features.shape}")
+        elif tsdf_embed_token is not None:
+            # Handle TSDF-only input if necessary for the architecture.
+            # This might require adjustments depending on how DiT blocks expect input.
+            # For now, we assume 'x' is usually present for diffusion.
+            print("[Presto.encode_shared] Warning: Only TSDF input provided to encode_shared. Feature handling might need review.")
+            # If needed, replicate tsdf_embed_token and add pos encoding, similar to original PrestoGIGA
+            # features = tsdf_embed_token.expand(-1, self.x_embedder.num_patches, -1) + self.pos_embed.to(tsdf_embed_token.device)
+            features = tsdf_embed_token # Or maybe just pass the single token? Depends on DiT. Assuming x is required.
         else:
-            raise ValueError("Either x or tsdf must be provided")
+            # Raise error or handle case with no input features
+             print("[Presto.encode_shared] Error: No input features (x or tsdf) to create transformer input.")
+             # return None, None, None # Or raise error
 
-        # --- Conditioning ---
-        t_embed = self.t_embedder(t) if t is not None else None # [B, D]
-        y_embed = self.y_embedder(y, train=self.training) if y is not None else None # [B, D]
-        print(t.shape, 't')
-        print(y.shape, 'y')
-        print(t_embed.shape, 't_embed')
-        print(y_embed.shape, 'y_embed')
-        # Combine conditioning embeddings (handle None cases)
+
+        # 4. Conditioning Signal 'c'
+        t_embed = self.t_embedder(t) if t is not None else None
+        y_embed = self.y_embedder(y, train=self.training) if y is not None and self.y_embedder is not None else None
+
+        print(f"[Presto.encode_shared] t_embed shape: {t_embed.shape if t_embed is not None else None}")
+        print(f"[Presto.encode_shared] y_embed shape: {y_embed.shape if y_embed is not None else None}")
+
+        # Combine conditioning embeddings
         if t_embed is not None and y_embed is not None:
             c = t_embed + y_embed
-            print(c.shape, 'c')
         elif t_embed is not None:
             c = t_embed
         elif y_embed is not None:
             c = y_embed
         else:
             # If no time or class conditioning, create a zero embedding or handle as needed
-            c = torch.zeros(features.shape[0], self.cfg.hidden_size, device=features.device, dtype=features.dtype)
-            # Alternatively, could raise an error if conditioning is always expected
+            # Ensure 'c' has the correct shape [B, hidden_size] if blocks expect it
+            if features is not None: # Need batch size info
+                 c = torch.zeros(features.shape[0], self.cfg.hidden_size, device=self.device, dtype=features.dtype)
+                 print("[Presto.encode_shared] No t or y conditioning provided, using zero vector for c.")
+            else:
+                 c = None # Cannot determine batch size
+                 print("[Presto.encode_shared] No t or y conditioning, and no features to determine batch size for zero vector c.")
 
-        # After TSDF encoder
-        if tsdf is not None and self.tsdf_encoder is not None:
-            model_logger.info(f"[PrestoGIGA.encode_shared] TSDF encoder output keys: {list(tsdf_features.keys())}")
-            for k, v in tsdf_features.items():
-                if isinstance(v, torch.Tensor):
-                    model_logger.info(f"[PrestoGIGA.encode_shared] TSDF feature '{k}' shape: {v.shape}, "
-                         f"range: [{v.min().item():.4f}, {v.max().item():.4f}]")
-        
-        # After TSDF embedding
-        if 'tsdf_embed' in locals() and tsdf_embed is not None:
-            model_logger.info(f"[PrestoGIGA.encode_shared] TSDF embedding shape: {tsdf_embed.shape}, "
-                  f"range: [{tsdf_embed.min().item():.4f}, {tsdf_embed.max().item():.4f}]")
-        
-        # After sequence embedding
-        if 'x_embed' in locals() and x_embed is not None:
-            model_logger.info(f"[PrestoGIGA.encode_shared] Sequence embedding shape: {x_embed.shape}, "
-                  f"range: [{x_embed.min().item():.4f}, {x_embed.max().item():.4f}]")
-        
-        # After combined features
-        if 'features' in locals() and features is not None:
-            model_logger.info(f"[PrestoGIGA.encode_shared] Combined features shape: {features.shape}, "
-                  f"range: [{features.min().item():.4f}, {features.max().item():.4f}]")
 
-        # At the end before return
-        model_logger.info(f"[PrestoGIGA.encode_shared] Output shapes: features={features.shape if features is not None else None}, "
-              f"c={c.shape if c is not None else None}, "
-              f"tsdf_features={type(tsdf_features)}, has {len(tsdf_features) if tsdf_features else 0} keys")
-        
+        print(f"[Presto.encode_shared] Final 'features' shape: {features.shape if features is not None else None}")
+        print(f"[Presto.encode_shared] Final 'c' shape: {c.shape if c is not None else None}")
+
+        # Return tsdf_features as well, might be useful for debugging or other purposes
         return features, c, tsdf_features
-        
-    def forward_grasp(self, sample, timestep, class_labels, tsdf, mode, positions):
-        """
-        Process features through grasp output heads using GIGA's decoder.
-        """
-        features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
-        model_logger.info(f"[PrestoGIGA.forward_grasp] Input shapes: positions={positions.shape}")
-        model_logger.info(f"[PrestoGIGA.forward_grasp] tsdf_features keys: {list(tsdf_features.keys())}")
-        
-        if self.decoder_qual is None:
-            raise RuntimeError("Grasp quality decoder is not initialized.")
 
-        # The GIGA decoder expects the encoded features 'c' directly.
-        # The dictionary tsdf_features holds these features.
-        qual = self.decoder_qual(positions, tsdf_features) # Pass positions and the feature dict
-        print(self.decoder_qual, 'decoder_qual', self.decoder_rot, 'decoder_rot', self.decoder_width, 'decoder_width')
 
-        if self.decoder_rot is None:
-            rot = torch.zeros(positions.shape[0], positions.shape[1], self.rot_dim, device=positions.device)
-            warnings.warn("Grasp rotation decoder is not initialized.", RuntimeWarning)
-        else:
-            rot = self.decoder_rot(positions, tsdf_features) # Pass positions and the feature dict
-
-        if self.decoder_width is None:
-            width = torch.zeros(positions.shape[0], positions.shape[1], 1, device=positions.device)
-            warnings.warn("Grasp width decoder is not initialized.", RuntimeWarning)
-        else:
-            width = self.decoder_width(positions, tsdf_features) # Pass positions and the feature dict
-
-        # After quality prediction
-        model_logger.info(f"[PrestoGIGA.forward_grasp] Quality output shape: {qual.shape}, "
-              f"range: [{qual.min().item():.4f}, {qual.max().item():.4f}], "
-              f"positive preds: {(qual > 0).float().mean().item():.4f}")
-        
-        # After rotation prediction
-        model_logger.info(f"[PrestoGIGA.forward_grasp] Rotation output shape: {rot.shape}, "
-              f"magnitude: {torch.norm(rot, dim=-1).mean().item():.4f}")
-        
-        # After width prediction
-        model_logger.info(f"[PrestoGIGA.forward_grasp] Width output shape: {width.shape}, "
-              f"range: [{width.min().item():.4f}, {width.max().item():.4f}]")
-        
-        return qual, rot, width
-        
     def forward_diffusion(self,
-                sample: Optional[torch.FloatTensor] = None,
-                timestep: Optional[Union[torch.Tensor, float, int]] = None,
-                class_labels: Optional[torch.Tensor] = None,
-                tsdf: Optional[torch.FloatTensor] = None,
-                mode: str = "joint", 
-                return_dict: bool = True):
+                          features: torch.Tensor,
+                          c: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass for diffusion model.
-        """
-        features, c, tsdf_features = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
-        if mode in ["diffusion", "joint"] and sample is not None:
-                # Process features through transformer blocks
-                # Note: features might now include an extra token for tsdf_embed
-                # Adjust FinalLayer input if necessary based on how features are structured
-                num_extra_tokens = 1 if (tsdf is not None and self.cfg.use_joint_embeddings) else 0
-
-                # Apply transformer blocks
-                print(len(self.blocks), 'len(self.blocks)')
-                for block in self.blocks:
-                     features = block.forward(features, c) # features shape [B, N+num_extra, D]
-
-                # Apply final layer for diffusion output
-                # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
-                sequence_features = features[:, :-num_extra_tokens, :] if num_extra_tokens > 0 else features
-                print(sequence_features.shape, 'sequence_features')
-                # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
-                final_layer_output = self.final_layer(sequence_features, c)
-                print(final_layer_output.shape, 'final_layer_output')
-
-                # --- Manually Unpatchify ---
-                # B = batch size
-                # N = num_sequence_patches
-                # P = patch_size
-                # C_out = output channels (self.out_dim, which is in_channels * 2 if learn_sigma else in_channels)
-                B, N, _ = final_layer_output.shape
-                P = self.x_embedder.patch_size
-                C_out = self.out_channels # Get the output channel dimension defined in __init__
-
-                # Reshape: [B, N, P * C_out] -> [B, N, P, C_out]
-                x_reshaped = final_layer_output.view(B, N, P, C_out)
-                print(x_reshaped.shape, 'x_reshaped')
-                # Permute: [B, N, P, C_out] -> [B, C_out, N, P]
-                x_permuted = x_reshaped.permute(0, 1, 2, 3)
-                # Reshape: [B, C_out, N, P] -> [B, C_out, N * P] (where N * P = T, the original sequence length)
-                diffusion_out_unpatchified = x_permuted.reshape(B, N * P, C_out)
-                # --------------------------
-                print(diffusion_out_unpatchified.shape, 'diffusion_out_unpatchified')
-                return diffusion_out_unpatchified
-        
-    def forward_tsdf(self, tsdf_features: Dict[str, torch.Tensor], positions: torch.Tensor):
-        """
-        Process features through TSDF output head using GIGA's decoder.
+        Processes features through the DiT blocks and final layer for diffusion prediction.
 
         Args:
-            tsdf_features: Dictionary of encoded features from tsdf_encoder
-                           (e.g., {'xy': ..., 'xz': ..., 'yz': ...}).
-            positions: [B, M, 3] query positions for TSDF prediction.
+            features: [B, N_seq (+ N_tsdf_token), D_hidden] Input features from encode_shared.
+            c: [B, D_hidden] Conditioning vector from encode_shared.
 
         Returns:
-            tsdf: [B, M, 1] TSDF values
+            diffusion_out: [B, T, C_out] Unpatchified diffusion model output.
         """
-        model_logger.info(f"[PrestoGIGA.forward_tsdf] Input shapes: positions={positions.shape}")
-        model_logger.info(f"[PrestoGIGA.forward_tsdf] tsdf_features keys: {list(tsdf_features.keys())}")
-        print('here!!!!!')
-        if self.decoder_tsdf is None:
-            raise RuntimeError("TSDF decoder is not initialized.")
+        print(f"[Presto.forward_diffusion] Input features shape: {features.shape}, c shape: {c.shape}")
 
-        # The GIGA decoder expects the encoded features 'c' directly.
-        # The dictionary tsdf_features holds these features.
-        tsdf = self.decoder_tsdf(positions, tsdf_features) # Pass positions and the feature dict
+        # Determine if the extra TSDF token is present
+        num_expected_seq_patches = self.x_embedder.num_patches
+        num_extra_tokens = features.shape[1] - num_expected_seq_patches
+        if num_extra_tokens not in [0, 1]: # Allow 0 or 1 extra token
+             print(f"[Presto.forward_diffusion] Warning: Unexpected number of tokens ({features.shape[1]}) vs expected sequence patches ({num_expected_seq_patches}). Num extra: {num_extra_tokens}")
+             # Adjust logic if more complex token structures are possible
+             num_extra_tokens = max(0, num_extra_tokens) # Assume extra tokens are at the end
 
-        # After TSDF prediction
-        model_logger.info(f"[PrestoGIGA.forward_tsdf] TSDF output shape: {tsdf.shape}, "
-              f"range: [{tsdf.min().item():.4f}, {tsdf.max().item():.4f}]")
-        print(tsdf.shape, 'tsdf_FORWWARD')
-        return tsdf
-        
-    def forward(self,
-                sample: Optional[torch.FloatTensor] = None,
-                timestep: Optional[Union[torch.Tensor, float, int]] = None,
-                class_labels: Optional[torch.Tensor] = None,
-                tsdf: Optional[torch.FloatTensor] = None,
-                p: Optional[torch.FloatTensor] = None,
-                p_tsdf: Optional[torch.FloatTensor] = None,
-                mode: str = "joint", # "diffusion", "grasp", "tsdf", "joint"
-                return_dict: bool = True):
-        """
-        Unified forward pass that supports diffusion, grasp, tsdf, or joint modes.
 
-        Args:
-            sample: [B, C, T] sequence data for diffusion input.
-            timestep: Diffusion timesteps.
-            class_labels: Conditioning variables (e.g., goal embedding).
-            tsdf: [B, 1, D, D, D] TSDF voxel grid (input to encoder).
-            p: [B, M, 3] query positions for grasp prediction.
-            p_tsdf: [B, N, 3] query positions for TSDF prediction.
-            mode: Specifies which parts of the model to run.
-                  "diffusion": Only diffusion prediction.
-                  "grasp": Only grasp prediction (requires tsdf and p).
-                  "tsdf": Only TSDF prediction (requires tsdf and p_tsdf).
-                  "joint": Runs diffusion and optionally grasp/tsdf if inputs provided.
-            return_dict: Whether to return a dictionary.
+        # Apply transformer blocks
+        print(f"[Presto.forward_diffusion] Applying {len(self.blocks)} DiT blocks...")
+        h = features # Use 'h' for hidden state through blocks
+        for i, block in enumerate(self.blocks):
+            h = block.forward(h, c) # Pass features and conditioning
+            print(f"[Presto.forward_diffusion] After block {i}, h shape: {h.shape}")
 
-        Returns:
-            Dictionary with model outputs based on the mode.
-        """
-        model_logger.info(f"[PrestoGIGA.forward] Mode: {mode}, Input shapes: "
-              f"sample={sample.shape if sample is not None else None}, "
-              f"tsdf={tsdf.shape if tsdf is not None else None}, "
-              f"p={p.shape if p is not None else None}, "
-              f"p_tsdf={p_tsdf.shape if p_tsdf is not None else None}")
-        
-        # Safely get the use_amp setting from the config, default to None if not present
-        use_amp_config = getattr(self.cfg, 'use_amp', False) # Default to False if not set
-        amp_context = torch.cuda.amp.autocast(enabled=use_amp_config) if torch.cuda.is_available() else nullcontext()
 
-        output = {}
-
-        with amp_context:
-            # 1. Encode inputs and get shared features
-            # Pass diffusion inputs (sample, timestep, class_labels) and TSDF input
-            # encode_shared returns transformer features, conditioning, and raw tsdf encoder output dict
-           
-
-            # 2. Diffusion Prediction (if mode requires it)
-            if mode in ["diffusion", "joint"] and sample is not None:
-                output["diffusion_output"] = self.forward_diffusion(sample, timestep, class_labels, tsdf, mode)
-
-            # 3. Grasp Prediction (if mode requires it and inputs available)
-            if mode in ["grasp", "joint"] and p is not None:
-                if not self.cfg.use_grasp:
-                     model_logger.info("Warning: Grasp prediction requested but model cfg.use_grasp is False.")
-                else:
-                     qual, rot, width = self.forward_grasp(sample, timestep, class_labels, tsdf, mode, p)
-                     print(qual.shape, rot.shape, width.shape, 'qual, rot, width')
-                     output["qual"] = qual
-                     output["rot"] = rot
-                     output["width"] = width
-
-            # 4. TSDF Prediction (if mode requires it and inputs available)
-          
-            if mode in ["tsdf", "joint"] and p_tsdf is not None:
-                 print('here!')
-                 if not self.cfg.use_tsdf:
-                     print('HERE!!!!')
-                     model_logger.info("Warning: TSDF prediction requested but model cfg.use_tsdf is False.")
-                 else:
-                     tsdf_pred = self.forward_tsdf(tsdf_features, p_tsdf)
-                     print(tsdf_pred.shape, 'tsdf_pred')
-                     output["tsdf_pred"] = tsdf_pred
-        
-        if not return_dict:
-            return tuple(output.values())
+        # Apply final layer for diffusion output
+        # Pass only the sequence tokens (excluding potential TSDF token) to final_layer
+        if num_extra_tokens > 0:
+            sequence_features = h[:, :-num_extra_tokens, :]
+            print(f"[Presto.forward_diffusion] Extracted sequence features shape: {sequence_features.shape} (removed {num_extra_tokens} extra tokens)")
         else:
-            print(output.keys(), "output")
-            return output
-    
+            sequence_features = h
+            print(f"[Presto.forward_diffusion] Using all features as sequence features shape: {sequence_features.shape}")
 
-    def grad_refine(self, tsdf, pos, bound_value=0.0125, lr=1e-6, num_step=1):
+        # final_layer_output shape: [B, num_sequence_patches, patch_size * out_channels]
+        final_layer_output = self.final_layer(sequence_features, c)
+        print(f"[Presto.forward_diffusion] Final layer output shape: {final_layer_output.shape}")
+
+
+        # --- Manually Unpatchify ---
+        B, N_seq_patches, _ = final_layer_output.shape
+        P = self.patch_size
+        C_out = self.out_channels # Output channels (e.g., 7 for sample, 14 for epsilon+variance)
+        T_out = N_seq_patches * P # Expected total output sequence length
+
+        # Reshape: [B, N_seq, P * C_out] -> [B, N_seq, P, C_out]
+        x_reshaped = final_layer_output.view(B, N_seq_patches, P, C_out)
+        # Permute: [B, N_seq, P, C_out] -> [B, C_out, N_seq, P]
+        x_permuted = x_reshaped.permute(0, 3, 1, 2) # Correct permutation: B, C_out, N_seq, P
+        # Reshape: [B, C_out, N_seq, P] -> [B, C_out, N_seq * P] = [B, C_out, T_out]
+        diffusion_out_unpatchified = x_permuted.reshape(B, C_out, T_out)
+        # Transpose to match typical trajectory format [B, T, C_out]
+        diffusion_out = diffusion_out_unpatchified.permute(0, 2, 1)
+        # --------------------------
+        print(f"[Presto.forward_diffusion] Unpatchified output shape: {diffusion_out.shape}")
+
+        return diffusion_out
+
+
+    def forward(self,
+                sample: torch.FloatTensor,
+                timestep: Union[torch.Tensor, float, int],
+                class_labels: Optional[torch.Tensor] = None,
+                tsdf: Optional[torch.FloatTensor] = None) -> torch.Tensor:
         """
-        Gradient-based refinement of grasp positions using GIGA's approach
-        
+        Main forward pass for the Presto model.
+
         Args:
-            tsdf: [B, 1, D, D, D] TSDF voxel grid
-            pos: [B, M, 3] initial positions
-            bound_value: bound for position updates
-            lr: learning rate
-            num_step: number of optimization steps
-            
+            sample: [B, C_in, T] Input noisy sequence data.
+            timestep: Diffusion timesteps.
+            class_labels: Conditioning variables.
+            tsdf: [B, 1, D, D, D] TSDF voxel grid for conditioning.
+
         Returns:
-            qual: [B, M, 1] refined grasp quality
-            pos: [B, M, 3] refined positions
-            rot: [B, M, 4] grasp rotation at refined positions
-            width: [B, M, 1] grasp width at refined positions
+            torch.Tensor: The predicted diffusion output (e.g., noise or x0)
+                          Shape: [B, T, C_out]
         """
-        pos_tmp = pos.clone()
-        l_bound = pos - bound_value
-        u_bound = pos + bound_value
-        pos_tmp.requires_grad = True
-        optimizer = torch.optim.SGD([pos_tmp], lr=lr)
-        
-        self.eval()
-        for p in self.parameters():
-            p.requires_grad = False
-            
-        for _ in range(num_step):
-            optimizer.zero_grad()
-            results = self.forward(tsdf=tsdf, p=pos_tmp, mode="grasp")
-            qual_out = results["qual"]
-            loss = -qual_out.sum()
-            loss.backward()
-            optimizer.step()
-            
-        with torch.no_grad():
-            pos_tmp = torch.maximum(torch.minimum(pos_tmp, u_bound), l_bound)
-            results = self.forward(tsdf=tsdf, p=pos_tmp, mode="grasp")
-            qual_out = results["qual"]
-            rot_out = results["rot"]
-            width_out = results["width"]
-            
-        for p in self.parameters():
-            p.requires_grad = True
-            
-        return qual_out, pos_tmp, rot_out, width_out
-    
+        # 1. Encode inputs to get features and conditioning
+        features, c, _ = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
+
+        if features is None or c is None:
+             raise ValueError("Failed to generate features or conditioning in encode_shared.")
+
+        # 2. Process through DiT blocks and final layer
+        diffusion_output = self.forward_diffusion(features, c)
+
+        print(f"[Presto.forward] Final output shape: {diffusion_output.shape}")
+        return diffusion_output
+
     @property
     def device(self):
         return next(iter(self.parameters())).device
-        
-    @property
-    def dtype(self):
-        return next(iter(self.parameters())).dtype
 
+    # Keep unpatchify method if needed elsewhere, but forward_diffusion handles it now
+    # def unpatchify(self, x): ...
 
-def select_grasps(qual_vol, pos_vol, rot_vol, width_vol, threshold=0.9, max_filter_size=4):
-    """
-    Select grasps from volumes based on quality
-    
-    Args:
-        qual_vol: [H, W, D] quality volume
-        pos_vol: [H, W, D, 3] position volume
-        rot_vol: [H, W, D, 4] rotation volume
-        width_vol: [H, W, D, 1] width volume
-        threshold: quality threshold
-        max_filter_size: size of maximum filter
-        
-    Returns:
-        grasps: List of selected grasp parameters
-        scores: List of grasp qualities
-    """
-    from scipy import ndimage
-    import numpy as np
-    
-    if torch.is_tensor(qual_vol):
-        qual_vol = qual_vol.detach().cpu().numpy()
-    if torch.is_tensor(pos_vol):
-        pos_vol = pos_vol.detach().cpu().numpy()
-    if torch.is_tensor(rot_vol):
-        rot_vol = rot_vol.detach().cpu().numpy()
-    if torch.is_tensor(width_vol):
-        width_vol = width_vol.detach().cpu().numpy()
-    
-    mask = qual_vol > threshold
-    
-    if not np.any(mask):
-        return [], []
-    
-    max_filtered = ndimage.maximum_filter(qual_vol, size=max_filter_size)
-    mask = (qual_vol >= max_filtered) & mask
-    
-    indices = np.where(mask)
-    
-    grasps = []
-    scores = []
-    
-    for i, j, k in zip(*indices):
-        pos = pos_vol[i, j, k]
-        rot = rot_vol[i, j, k]
-        width = width_vol[i, j, k, 0]
-        qual = qual_vol[i, j, k]
-        
-        grasp = {
-            'position': pos,
-            'rotation': rot,
-            'width': width
-        }
-        
-        grasps.append(grasp)
-        scores.append(qual)
-    
-    return grasps, scores
-
-
-def predict_grasp_volumes(model, tsdf, resolution=40, device=None):
-    """
-    Predict grasp volumes from a TSDF
-    
-    Args:
-        model: PrestoGIGA model
-        tsdf: [1, 1, D, D, D] TSDF voxel grid
-        resolution: resolution of output volumes
-        device: device to run prediction on
-        
-    Returns:
-        qual_vol: [H, W, D] quality volume
-        rot_vol: [H, W, D, 4] rotation volume
-        width_vol: [H, W, D] width volume
-    """
-    if device is None:
-        device = model.device
-        
-    tsdf = tsdf.to(device)
-    
-    grid = torch.linspace(-0.5, 0.5, resolution, device=device)
-    x, y, z = torch.meshgrid(grid, grid, grid, indexing='ij')
-    query_points = torch.stack([x, y, z], dim=-1).view(1, -1, 3)
-    
-    with torch.no_grad():
-        results = model.forward(tsdf=tsdf, p=query_points, mode="grasp")
-        
-    qual = results["qual"].view(resolution, resolution, resolution)
-    rot = results["rot"].view(resolution, resolution, resolution, 4)
-    width = results["width"].view(resolution, resolution, resolution, 1)
-    
-    return qual, rot, width, query_points.view(resolution, resolution, resolution, 3)
+    # Keep set_pos_embed if needed for external initialization, but _initialize_pos_embed handles internal setup
+    # def set_pos_embed(self, grid_size): ...

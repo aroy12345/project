@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import types
 import logging
+import warnings # Import warnings
 
 # Set up logging to file
 def setup_logging():
@@ -42,7 +43,11 @@ from data_temp import generate_dummy_datapoint, create_batch_from_datapoints
 
 from presto.data.franka_util import franka_fk
 
-from presto.network.combined import PrestoGIGA
+from presto.network.combined import (
+    GIGA, GIGAConfig,
+    Presto, PrestoConfig,
+    # Keep other necessary imports like TSDFEmbedder, encoder/decoder dicts if needed directly
+)
 from presto.network.factory import get_scheduler, DiffusionConfig, ModelConfig
 
 
@@ -108,32 +113,40 @@ def _tsdf_loss_fn(pred_logits, target):
     return F.binary_cross_entropy_with_logits(pred_logits, target.float(), reduction="none")
 
 def train_loop(
+    # --- Stage Control ---
+    training_mode: str, # 'giga' or 'presto'
+    # --- Models ---
+    model: nn.Module, # Either GIGA or Presto instance
+    giga_model_eval: Optional[nn.Module], # Pre-trained GIGA model for Presto's aux loss
+    # --- Standard Components ---
     log_dir: str,
-    model: nn.Module,
-    sched: SchedulerMixin,
+    sched: Optional[SchedulerMixin], # Optional for GIGA stage
     optimizer: th.optim.Optimizer,
-    lr_scheduler, # Add type hint if available
-    scaler: th.cuda.amp.GradScaler, # Or torch.amp.GradScaler
-    writer, # Add type hint if available (e.g., WandbLogger or None)
-    cost, # Add type hint if available (e.g., CuroboCost or None)
-    normalizer, # Add type hint if available (e.g., Normalize)
-    fk_fn, # Add type hint if available (e.g., Callable)
+    lr_scheduler,
+    scaler: th.cuda.amp.GradScaler,
+    writer,
+    cost, # For Presto aux losses
+    normalizer, # For Presto data normalization
+    fk_fn, # For Presto aux losses and affordance query
     device: str,
     # --- Hyperparameters ---
     num_epochs: int,
     batch_size: int,
     use_amp: bool,
+    # Loss Coefficients (relevant ones passed based on mode)
     diffusion_coef: float,
     grasp_coef: float,
     tsdf_coef: float,
     collision_coef: float,
     distance_coef: float,
     euclidean_coef: float,
+    affordance_loss_coef: float, # NEW: Weight for Presto's affordance loss
+    # Other params
     reweight_loss_by_coll: bool,
-    x0_type: str,
-    x0_iter: int,
-    cost_margin: float, # Assuming cost object has margin internally if needed
-    log_by: str, # 'epoch' or 'step'
+    x0_type: Optional[str], # Optional for GIGA stage
+    x0_iter: Optional[int], # Optional for GIGA stage
+    cost_margin: float,
+    log_by: str,
     step_max: Optional[int],
     save_epoch: int,
     # --- Dummy Data Params ---
@@ -143,908 +156,1065 @@ def train_loop(
     tsdf_dim: int,
     num_grasp_points: int,
     num_tsdf_points: int,
-    # Add any other parameters train_loop might need from train() call
 ):
     """
-    Main training loop for the combined PrestoGIGA model using dummy data.
+    Main training loop for a single stage (GIGA or Presto).
+    Returns the path to the last saved checkpoint for this stage.
     """
-    global_step = 0
     start_time = time.time()
+    global_step = 0 # Or load from checkpoint if resuming steps
+    last_ckpt_path = None # Variable to store the last saved checkpoint path
 
-    # Determine max diffusion steps
-    diff_step_max: int = sched.config.num_train_timesteps
-    if step_max is not None:
-        diff_step_max = step_max
-
-    # Precompute iterative diffusion steps if needed
+    # --- Diffusion Setup (Only for Presto stage) ---
+    diff_step_max = 0
     substepss = None
-    if x0_type == 'iter':
-        # Cache all possible substeps shorter than `num_train_timesteps`.
-        # Note: Using sched.config.num_train_timesteps here, adjust if needed
-        substepss_list = [
-            th.round(
-                th.arange(i, 0, -i / x0_iter, device=device)).long()
-            for i in range(1, sched.config.num_train_timesteps + 1)]
-        # Pad shorter sequences to the length of the longest (x0_iter)
-        max_len = x0_iter
-        padded_substepss = [F.pad(s, (0, max_len - len(s))) for s in substepss_list]
-        substepss = th.stack(padded_substepss, dim=0).to(
-            device=device,
-            dtype=th.long).sub_(1).clamp_(min=0) # Subtract 1 for 0-based indexing, clamp
+    if training_mode == 'presto':
+        if sched is None:
+            raise ValueError("Scheduler must be provided for Presto training mode.")
+        diff_step_max = sched.config.num_train_timesteps
+        if step_max is not None:
+            diff_step_max = min(step_max, diff_step_max) # Use smaller if step_max is set
 
-    logging.info(f"Starting training loop with: epochs={num_epochs}, batch_size={batch_size}")
-    logging.info(f"Loss coefficients: diffusion={diffusion_coef}, grasp={grasp_coef}, tsdf={tsdf_coef}, "
-                 f"collision={collision_coef}, distance={distance_coef}, euclidean={euclidean_coef}")
-    logging.info(f"Model settings: seq_len={seq_len}, obs_dim={obs_dim}, cond_dim={cond_dim}, "
-                 f"tsdf_dim={tsdf_dim}, num_grasp_points={num_grasp_points}, num_tsdf_points={num_tsdf_points}")
+        if x0_type == 'iter':
+            # (Keep the substepss calculation logic as before)
+            # ... (copy logic from original train_loop lines 151-161)
+            substepss_list = [
+                th.round(
+                    th.arange(i, 0, -i / x0_iter, device=device)).long()
+                for i in range(1, sched.config.num_train_timesteps + 1)]
+            max_len = x0_iter
+            padded_substepss = [F.pad(s, (0, max_len - len(s))) for s in substepss_list]
+            substepss = th.stack(padded_substepss, dim=0).to(
+                device=device,
+                dtype=th.long).sub_(1).clamp_(min=0)
+            print("Precomputed iterative diffusion substeps.")
 
-    ic("Starting training loop...")
+    logging.info(f"--- Starting Training Loop --- MODE: {training_mode.upper()} ---")
+    logging.info(f"Epochs: {num_epochs}, Batch Size: {batch_size}")
+    # Log relevant loss coefficients based on mode
+    if training_mode == 'giga':
+        logging.info(f"Loss coefficients: grasp={grasp_coef}, tsdf={tsdf_coef}")
+    elif training_mode == 'presto':
+        logging.info(f"Loss coefficients: diffusion={diffusion_coef}, collision={collision_coef}, "
+                     f"distance={distance_coef}, euclidean={euclidean_coef}, affordance={affordance_loss_coef}")
+        logging.info(f"Reweight by collision: {reweight_loss_by_coll}")
+        if giga_model_eval is None:
+             print("Warning: Presto training mode started without a pre-trained GIGA model for affordance loss.")
+             affordance_loss_coef = 0.0 # Disable affordance loss if model not provided
+
+
+    ic(f"Starting training loop for mode: {training_mode}...")
 
     for epoch in range(num_epochs):
-        logging.info(f"\n=== EPOCH {epoch+1}/{num_epochs} ===")
-        model.train()
-        # Log device memory if CUDA
+        logging.info(f"\n=== MODE: {training_mode.upper()} | EPOCH {epoch+1}/{num_epochs} ===")
+        model.train() # Set current model (GIGA or Presto) to train mode
+        if training_mode == 'presto' and giga_model_eval is not None:
+            giga_model_eval.eval() # Ensure loaded GIGA model is in eval mode
+
+        # Log memory
         if device.startswith('cuda'):
             mem_allocated = th.cuda.memory_allocated(device) / (1024 ** 3)
             mem_reserved = th.cuda.memory_reserved(device) / (1024 ** 3)
             logging.info(f"GPU Memory: {mem_allocated:.2f}GB allocated, {mem_reserved:.2f}GB reserved")
+
         epoch_total_loss = 0.0
-        epoch_diffusion_loss = 0.0
-        epoch_grasp_loss = 0.0
-        epoch_tsdf_loss = 0.0
-        epoch_collision_loss = 0.0
-        epoch_distance_loss = 0.0
-        epoch_euclidean_loss = 0.0
+        # Track specific losses per epoch
+        epoch_losses = {} # Dictionary to store different loss components
 
-        # === Placeholder for data loading ===
-        # Simulate a dataset size for progress bar
-        dummy_dataset_size = 100 # Example: Simulate 100 datapoints
-        num_batches = math.ceil(dummy_dataset_size / batch_size)
-        # ===================================
+        # --- Dummy Data Generation for the Epoch ---
+        # Generate a fixed set of dummy data for the epoch for simplicity
+        # In a real scenario, this would be a DataLoader
+        num_batches = 5 # Example: simulate 5 batches per epoch
+        epoch_data = []
+        for _ in range(num_batches * batch_size):
+             epoch_data.append(generate_dummy_datapoint(
+                 seq_len, obs_dim, cond_dim, tsdf_dim,
+                 num_grasp_points, num_tsdf_points, device='cpu' # Generate on CPU first
+             ))
 
-        progress_bar = tqdm(range(num_batches), desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
+        pbar = tqdm(range(num_batches), desc=f"Epoch {epoch+1}")
+        for batch_idx in pbar:
+            # Create batch
+            batch_start = batch_idx * batch_size
+            batch_end = batch_start + batch_size
+            batch_list = epoch_data[batch_start:batch_end]
+            batch = create_batch_from_datapoints(batch_list, device=device)
 
-        for batch_idx in progress_bar:
             optimizer.zero_grad()
 
-            # === Generate Dummy Batch ===
-            batch_list = [generate_dummy_datapoint(seq_len, obs_dim, cond_dim, tsdf_dim, num_grasp_points, num_tsdf_points) for _ in range(batch_size)]
-            batch = create_batch_from_datapoints(batch_list, device)
-            # ===========================
+            # Use AMP context
+            amp_context = th.cuda.amp.autocast(enabled=use_amp) if device.startswith('cuda') else nullcontext()
 
-            # Log batch data shapes and statistics
-            logging.info(f"Batch {batch_idx+1}/{num_batches}: Generated dummy data")
-            logging.info(f"  Trajectory shape: {batch['trajectory'].shape}, "
-                         f"range: [{batch['trajectory'].min():.4f}, {batch['trajectory'].max():.4f}]")
-            logging.info(f"  Condition shape: {batch['env-label'].shape}, "
-                         f"range: [{batch['env-label'].min():.4f}, {batch['env-label'].max():.4f}]")
-            logging.info(f"  TSDF grid shape: {batch['tsdf'].shape}, "
-                         f"sparsity: {(batch['tsdf'] == 0).float().mean():.2f}")
-            logging.info(f"  Grasp query points: {batch['grasp_query_points'].shape}, "
-                         f"TSDF query points: {batch['tsdf_query_points'].shape}")
-
-            # Extract ground truth data from batch
-            # Transpose immediately to [B, C, T] format for diffusion
-            true_action_ds = batch['trajectory'] # Shape: [B, Obs, Seq] -> [B, C, T]
-            cond_data = batch['env-label']   # Shape: [B, Cond]
-            tsdf_grid = batch['tsdf']        # Shape: [B, 1, D, D, D]
-            grasp_query_points = batch['grasp_query_points'] # Shape: [B, N_grasp, 3]
-            tsdf_query_points = batch['tsdf_query_points']   # Shape: [B, N_tsdf, 3]
-
-            # Ground truth for GIGA/TSDF parts
-            gt_grasp_label = batch['grasp_qual_labels'] # Shape: [B, N_grasp, 1] -> Squeeze later if needed
-            gt_grasp_rot = batch['grasp_rot_labels']    # Shape: [B, N_grasp, 4] -> Adjust loss fn if needed for 2 candidates
-            gt_grasp_width = batch['grasp_width_labels']# Shape: [B, N_grasp, 1] -> Squeeze later if needed
-            gt_tsdf_value = batch['tsdf_labels']        # Shape: [B, N_tsdf, 1] -> Squeeze later if needed
-
-
-            # --- Diffusion Process ---
-            steps = th.randint(
-                0, diff_step_max,
-                (batch_size,), device=device
-            ).long()
-
-            noise = th.randn_like(true_action_ds)
-
-            noisy_actions = sched.add_noise(true_action_ds, noise, steps)
-            
-            logging.info(f"  True actions shape: {true_action_ds[0][0]}, "
-                         f"range: [{true_action_ds.min().item():.4f}, {true_action_ds.max().item():.4f}]")
-            logging.info(f"  Noise shape: {noise[0][0]}, "
-                         f"range: [{noise.min().item():.4f}, {noise.max().item():.4f}]")
-            logging.info(f"  Noisy actions shape: {noisy_actions[0][0]}, "
-                         f"range: [{noisy_actions.min().item():.4f}, {noisy_actions.max().item():.4f}]")
-
-            # Log diffusion steps and noise
-            if batch_idx == 0:  # Log only for first batch each epoch to avoid spamming
-                logging.info(f"  Diffusion: timestep range [{steps.min().item()}, {steps.max().item()}], "
-                             f"noise range [{noise.min().item():.4f}, {noise.max().item():.4f}]")
-                logging.info(f"  Noisy actions shape: {noisy_actions.shape}, "
-                             f"range: [{noisy_actions.min().item():.4f}, {noisy_actions.max().item():.4f}]")
-
-            # --- Model Forward Pass ---
-            with th.cuda.amp.autocast(enabled=use_amp):
-                # Transpose noisy_actions from [B, C, T] to [B, T, C] for the model's PatchEmbed
-                model_input_sample = noisy_actions
-                model_output = model.forward(
-                    sample=model_input_sample, # Pass the transposed tensor
-                    timestep=steps,
-                    class_labels=cond_data,
-                    tsdf=tsdf_grid,
-                    p=grasp_query_points,
-                    p_tsdf=tsdf_query_points,
-                    mode="joint",
-                    return_dict=True # Ensure we get a dictionary back
-                )
-
-                # Extract predictions
-                # Model output 'sample' is expected to be [B, C, T] from forward_diffusion
-                pred_noise_or_x0 = model_output['diffusion_output']
-                pred_grasp_qual = model_output['qual']
-                pred_grasp_rot = model_output['rot']
-                pred_grasp_width = model_output['width']
-                pred_tsdf = model_output.get('tsdf') # Use .get() for optional TSDF output
-
-                # Log model outputs
-                if batch_idx == 0:  # Log only for first batch each epoch
-                    logging.info("  Model output shapes:")
-                    logging.info(f"    Diffusion pred: {pred_noise_or_x0.shape}")
-                    logging.info(f"    Grasp quality: {pred_grasp_qual.shape}, "
-                                 f"range: [{th.sigmoid(pred_grasp_qual).min().item():.4f}, "
-                                 f"{th.sigmoid(pred_grasp_qual).max().item():.4f}]")
-                    logging.info(f"    Grasp rotation: {pred_grasp_rot.shape}, "
-                                 f"norm: {pred_grasp_rot.norm(dim=-1).mean().item():.4f}")
-                    logging.info(f"    Grasp width: {pred_grasp_width.shape}, "
-                                 f"range: [{pred_grasp_width.min().item():.4f}, {pred_grasp_width.max().item():.4f}]")
-                    if "tsdf" in model_output:
-                        logging.info(f"    TSDF pred: {pred_tsdf.shape}, "
-                                     f"range: [{th.sigmoid(pred_tsdf).min().item():.4f}, "
-                                     f"{th.sigmoid(pred_tsdf).max().item():.4f}]")
-
-                # --- Loss Calculation ---
+            with amp_context:
                 total_loss = 0.0
-                loss_dict = {}
+                loss_dict = {} # Losses for this step
 
-                # 1. Diffusion Loss (PRESTO)
-                # Expects preds [B, C, T], trajs [B, C, T], noise [B, C, T]
-                loss_ddpm = diffusion_loss(
-                    pred_noise_or_x0, true_action_ds,
-                    noise, noisy_actions, steps, # noisy_actions is still [B, C, T] here
-                    sched=sched,
-                    reduction=('none' if reweight_loss_by_coll else 'mean')
-                )
-                # Note: Reweighting requires calculating collision cost first
+                # --- GIGA Forward and Loss (Stage 1) ---
+                if training_mode == 'giga':
+                    tsdf_input = batch['tsdf']
+                    p_grasp = batch['grasp_query_points']
+                    p_tsdf = batch['tsdf_query_points'] # For TSDF prediction loss
 
-                # Initialize auxiliary losses
-                loss_coll = th.zeros_like(loss_ddpm.mean())
-                loss_dist = th.zeros_like(loss_ddpm.mean())
-                loss_eucd = th.zeros_like(loss_ddpm.mean())
-                pred_traj_ds = None # Predicted trajectory at t=0
+                    # GIGA forward pass
+                    # GIGA model now directly takes tsdf and points
+                    giga_output = model(tsdf=tsdf_input, p_grasp=p_grasp, p_tsdf=p_tsdf)
 
-                # Calculate predicted trajectory x0 if needed for aux losses or reweighting
-                needs_traj = collision_coef > 0 or distance_coef > 0 or euclidean_coef > 0 or reweight_loss_by_coll
-                if needs_traj:
-                    if x0_type == 'step':
-                        pred_traj_ds = pred_x0(sched, steps, pred_noise_or_x0, noisy_actions)
-                    elif x0_type == 'iter':
-                        # Iterative refinement to get x0
-                        pred_traj_ds = noisy_actions
-                        if isinstance(sched, DDIMScheduler) and substepss is not None:
-                             # Ensure substeps indices are valid for the current steps
-                            current_substeps = substepss[steps] # Shape [B, x0_iter]
-                            for i in range(x0_iter):
-                                iter_steps = current_substeps[..., i]
-                                # Need to re-run the diffusion part of the model for intermediate steps
-                                iter_preds = model(x=pred_traj_ds, timestep=iter_steps, cond=cond_data, mode="diffusion")['diffusion']
-                                # Use scheduler step function
-                                step_output = sched.step(
-                                     iter_preds, iter_steps[0].item(), pred_traj_ds # Assuming step takes single timestep value
-                                     # Pass other necessary args for sched.step if any
-                                 )
-                                pred_traj_ds = step_output.prev_sample
+                    # Calculate GIGA losses
+                    giga_loss = 0.0
+                    # Quality Loss
+                    if 'qual' in giga_output and grasp_coef > 0:
+                        qual_loss = _qual_loss_fn(giga_output['qual'].squeeze(-1), batch['grasp_qual_labels'].squeeze(-1))
+                        loss_dict['giga_qual_loss'] = qual_loss.mean()
+                        giga_loss += grasp_coef * loss_dict['giga_qual_loss']
+                        logging.info(f"GIGA Qual loss: {giga_output['qual'].squeeze(-1).shape, batch['grasp_qual_labels'].squeeze(-1).shape}")
+                    # Rotation Loss
+                    if 'rot' in giga_output and grasp_coef > 0:
+                        rot_loss = _rot_loss_fn(giga_output['rot'], batch['grasp_rot_labels'])
+                        loss_dict['giga_rot_loss'] = rot_loss.mean()
+                        giga_loss += grasp_coef * loss_dict['giga_rot_loss']
+                        logging.info(f"GIGA Rot loss: {giga_output['rot'].shape, batch['grasp_rot_labels'].shape}")
+                    # Width Loss
+                    if 'width' in giga_output and grasp_coef > 0:
+                        width_loss = _width_loss_fn(giga_output['width'].squeeze(-1), batch['grasp_width_labels'].squeeze(-1))
+                        loss_dict['giga_width_loss'] = width_loss.mean()
+                        giga_loss += grasp_coef * loss_dict['giga_width_loss']
+                        logging.info(f"GIGA Width loss: {giga_output['width'].squeeze(-1).shape, batch['grasp_width_labels'].squeeze(-1).shape}")
+                    # TSDF Prediction Loss
+                    if 'tsdf_pred' in giga_output and tsdf_coef > 0:
+                        tsdf_pred_loss = _tsdf_loss_fn(giga_output['tsdf_pred'].squeeze(-1), batch['tsdf_labels'].squeeze(-1))
+                        loss_dict['giga_tsdf_loss'] = tsdf_pred_loss.mean()
+                        giga_loss += tsdf_coef * loss_dict['giga_tsdf_loss']
+                        logging.info(f"GIGA TSDF loss: {giga_output['tsdf_pred'].squeeze(-1).shape, batch['tsdf_labels'].squeeze(-1).shape}")
+                    total_loss = giga_loss
+                    loss_dict['total_loss'] = total_loss
+
+
+                # --- Presto Forward and Loss (Stage 2) ---
+                elif training_mode == 'presto':
+                    # Prepare Presto inputs
+                    traj_data = batch['trajectory'] # Shape [B, S, C]
+                    # Presto expects [B, C, S]
+                    sample_input = traj_data.permute(0,1,2) # [B, C_in, T]
+                    print(f"Sample input shape: {sample_input.shape}")
+                    cond_input = batch['env-label'] # Shape [B, cond_dim]
+                    tsdf_input = batch['tsdf'] # Shape [B, 1, D, D, D]
+                    col_label = batch.get('col-label') # For aux losses
+
+                    # Normalize trajectory data if normalizer is provided
+                    if normalizer:
+                        # Ensure normalizer stats are on the correct device
+                        normalizer.to(device)
+                        sample_norm = normalizer.normalize(sample_input)
+                        print(f"Normalized sample range: [{sample_norm.min():.4f}, {sample_norm.max():.4f}]")
+                    else:
+                        sample_norm = sample_input
+                        print("Skipping normalization.")
+
+
+                    # Sample timesteps
+                    timesteps = th.randint(0, diff_step_max, (batch_size,), device=device).long()
+                    print(f"Timesteps shape: {timesteps.shape}")
+
+                    # 1. Sample noise
+                    noise = th.randn_like(sample_norm)
+                    print(f"Noise shape: {noise.shape}")
+
+                    # 2. Create noisy samples (x_t)
+                    noisy_samples = sched.add_noise(sample_norm, noise, timesteps)
+                    print(f"Noisy samples shape: {noisy_samples.shape}")
+
+                    # 3. Get model prediction (preds)
+                    # The model predicts noise (epsilon) or x0 based on its config/scheduler
+                    model_output = model(
+                        sample=noisy_samples,
+                        timestep=timesteps,
+                        class_labels=cond_input,
+                        tsdf=tsdf_input # Pass TSDF conditioning
+                    )
+                    print(f"Model output shape: {model_output.shape}")
+
+                    # 4. Calculate diffusion loss using the utility function
+                    diff_loss = diffusion_loss(
+                        preds=model_output,
+                        trajs=sample_norm, # Original clean data (x_start)
+                        noise=noise,
+                        noisy_trajs=noisy_samples, # Noisy data (x_t)
+                        steps=timesteps,
+                        sched=sched,
+                        reduction='mean' # Explicitly use mean reduction
+                    )
+
+                    # 5. Calculate predicted x0 if needed for visualization/aux losses
+                    pred_x0_vis = None
+                    # We need pred_x0 for aux losses, so calculate it
+                    pred_x0_vis = pred_x0(
+                        sched=sched,
+                        t=timesteps,
+                        v=model_output, # Model output (epsilon, sample, or v)
+                        x=noisy_samples # Noisy input (x_t)
+                    )
+                    print(f"Predicted x0 shape: {pred_x0_vis.shape}")
+
+                    loss_dict['diffusion_loss'] = diff_loss
+                    total_loss += diffusion_coef * diff_loss
+                    print(f"Diffusion loss shape: {diff_loss.shape}")
+                    print(f"Diffusion loss: diffusion_coef: {diffusion_coef}, diff_loss: {diff_loss}")
+                    print(f"Euclidean loss: euclidean_coef: {euclidean_coef}, collision_coef: {collision_coef}, distance_coef: {distance_coef}")
+
+                    # --- Auxiliary Presto Losses (Collision, Distance, Euclidean) ---
+                    # Denormalize predicted x0 for physical losses
+                    if normalizer:
+                        pred_x0_denorm = normalizer.unnormalize(pred_x0_vis)
+                    else:
+                        pred_x0_denorm = pred_x0_vis # Use directly if no normalization
+
+                    # Reshape pred_x0_denorm from [B, C, T] to [B, T, C] for cost/fk functions
+                    pred_x0_traj = pred_x0_denorm.permute(0, 1, 2) # [B, T, C_in]
+
+                    # Collision/Distance Loss (using CuroboCost)
+                    if cost is not None and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
+                         if col_label is None:
+                              print("Warning: CuroboCost requires 'col-label' in batch, but it's missing. Skipping cost-based losses.")
+                         else:
+                              # Ensure cost object batch size matches current batch
+                              if hasattr(cost, 'batch_size') and cost.batch_size != batch_size:
+                                   print(f"Warning: Adjusting CuroboCost batch size from {cost.batch_size} to {batch_size}")
+                                   # This might require re-instantiation or a setter method in CuroboCost
+                                   # cost.update_batch_size(batch_size) # Assuming such a method exists
+                                   # For simplicity, we'll proceed, but this could be an issue.
+
+                              # Calculate cost (assuming cost function takes trajectory and conditioning)
+                              # The exact signature depends on CuroboCost implementation
+                              # Example: cost_out = cost.forward(pred_x0_traj, config_data=col_label)
+                              # This part needs to be adapted based on the actual CuroboCost API
+                              try:
+                                   # Placeholder: Assume cost.forward returns a dict with 'cost' and 'distance'
+                                   # You'll need to replace this with the actual call
+                                   cost_results = {'cost': th.rand(batch_size, seq_len, device=device) * 0.1,
+                                                   'distance': th.rand(batch_size, seq_len, device=device) * 0.05}
+                                   print("Placeholder CuroboCost calculation used.")
+
+                                   # Collision Loss (e.g., hinge loss on cost)
+                                   if collision_coef > 0:
+                                        coll_cost = cost_results['cost']
+                                        # Example hinge loss: penalize cost > margin
+                                        coll_loss = F.relu(coll_cost - cost_margin).mean()
+                                        loss_dict['collision_loss'] = coll_loss
+                                        total_loss += collision_coef * coll_loss
+
+                                   # Distance Loss (e.g., mean distance from cost output)
+                                   if distance_coef > 0:
+                                        dist_cost = cost_results['distance']
+                                        dist_loss = dist_cost.mean() # Example: just mean distance
+                                        loss_dict['distance_loss'] = dist_loss
+                                        total_loss += distance_coef * dist_loss
+
+                                   # Reweighting (Example based on collision cost)
+                                   if reweight_loss_by_coll:
+                                        # Example: Increase weight for trajectories with high collision cost
+                                        with th.no_grad():
+                                             # Use max cost along trajectory as indicator
+                                             max_coll_cost = cost_results['cost'].max(dim=1)[0] # [B]
+                                             # Simple reweighting: higher weight if cost > margin
+                                             weights = th.where(max_coll_cost > cost_margin, 2.0, 1.0)
+                                             weights = weights / weights.mean() # Normalize weights
+                                        total_loss = total_loss * weights.mean() # Apply average weight adjustment
+                                        loss_dict['reweight_factor'] = weights.mean()
+
+                              except Exception as e:
+                                   print(f"Error during CuroboCost calculation: {e}. Skipping cost losses for this step.")
+
+
+                    # Euclidean Loss (using FK)
+                    if fk_fn is not None and euclidean_coef > 0:
+                        # Get target trajectory end-effector positions
+                        target_traj = sample_input.permute(0,1,2) # [B, T, C_in]
+                        # Call FK for the target trajectory (flatten batch and time dims)
+                        target_ee_transform = fk_fn(target_traj.reshape(-1, obs_dim)) # Shape: [B*T, 4, 4]
+                        # Extract position and reshape back
+                        target_ee_pos = target_ee_transform[:, :3, 3].view(batch_size, seq_len, 3) # Shape: [B, T, 3]
+
+                        # Get predicted trajectory end-effector positions
+                        # Call FK for the predicted trajectory (flatten batch and time dims)
+                        pred_ee_transform = fk_fn(pred_x0_traj.reshape(-1, obs_dim)) # Shape: [B*T, 4, 4]
+                        # Extract position and reshape back
+                        pred_ee_pos = pred_ee_transform[:, :3, 3].view(batch_size, seq_len, 3) # Shape: [B, T, 3]
+
+                        # Calculate L2 distance between EE positions
+                        eucl_loss = th.linalg.norm(target_ee_pos - pred_ee_pos, dim=-1).mean()
+                        loss_dict['euclidean_loss'] = eucl_loss
+                        total_loss += euclidean_coef * eucl_loss
+
+                    # --- Auxiliary Affordance Loss (using pre-trained GIGA) ---
+                    print(f"Affordance loss coef: {affordance_loss_coef}")
+                    if giga_model_eval is not None and affordance_loss_coef > 0:
+                        if fk_fn is None:
+                             print("Warning: Affordance loss requires fk_fn to get final EE position. Skipping affordance loss.")
                         else:
-                             print(f"Warning: x0_type='iter' requires DDIMScheduler and precomputed substeps. Falling back to single step prediction.")
-                             pred_traj_ds = pred_x0(sched, steps, pred_noise_or_x0, noisy_actions)
-                    else: # 'legacy' or other unsupported
-                         raise ValueError(f"Unsupported x0_type: {x0_type}")
+                             with th.no_grad():
+                                  print(f"Pred x0 traj shape: {pred_x0_traj.shape}")
+                                  final_joint_state = pred_x0_traj[:, -1, :] # [B, C_in]
+                                  print(f"Final joint state shape: {final_joint_state.shape}")
 
-                    # Unnormalize predicted trajectory for cost functions
-                    # Assuming normalizer has 'unnormalize' method and works on shape [B, Seq, Obs]
-                    u_pred_sd = normalizer.unnormalize(pred_traj_ds.swapaxes(-1, -2)) # Shape [B, Seq, Obs]
+                                  # Call FK to get the full 4x4 transformation matrix
+                                  final_ee_transform = fk_fn(final_joint_state) # Shape: [B, 4, 4]
 
-                    # 2. Collision Loss (PRESTO Aux)
-                    if collision_coef > 0 and cost is not None:
-                        # Assuming cost function takes [B, Seq, Obs] and condition dict
-                        # The dummy batch needs a 'col_label' field compatible with the cost function
-                        col_label = batch.get('col_label', None) # Get collision geometry info if available
-                        if col_label is not None:
-                             loss_coll = cost(u_pred_sd, col_label).mean()
-                        else:
-                             print("Warning: Collision coefficient > 0 but no 'col_label' found in dummy batch for cost function.")
-                        total_loss += collision_coef * loss_coll
-                        loss_dict['collision_loss'] = loss_coll.item()
-                        epoch_collision_loss += loss_coll.item()
+                                  # Extract the position (first 3 elements of the 4th column)
+                                  final_ee_pos = final_ee_transform[:, :3, 3] # Shape: [B, 3]
 
+                                  print(f"Final EE pos shape: {final_ee_pos.shape}") # Should now be [B, 3]
+                                  giga_query_points = final_ee_pos.unsqueeze(1) # [B, 1, 3]
+                                  print(f"GIGA query points shape: {giga_query_points.shape}")
 
-                    # 3. Distance Loss (PRESTO Aux)
-                    if distance_coef > 0:
-                        loss_dist = F.mse_loss(u_pred_sd[:, 1:, :], u_pred_sd[:, :-1, :])
-                        total_loss += distance_coef * loss_dist
-                        loss_dict['distance_loss'] = loss_dist.item()
-                        epoch_distance_loss += loss_dist.item()
+                                  giga_model_eval.to(device)
+                                  tsdf_features_for_giga = giga_model_eval.encode_tsdf(tsdf_input)
 
-                    # 4. Euclidean Loss (PRESTO Aux)
-                    if euclidean_coef > 0 and fk_fn is not None:
-                         x_pred_sd = fk_fn(u_pred_sd) # FK on predicted joints [B, Seq, Task]
-                         with th.no_grad():
-                             # Unnormalize ground truth action (already swapped)
-                             u_true_sd = normalizer.unnormalize(batch['trajectory'].swapaxes(-1, -2))
-                             x_true_sd = fk_fn(u_true_sd) # FK on true joints
-                         loss_eucd = F.mse_loss(x_pred_sd, x_true_sd)
-                         total_loss += euclidean_coef * loss_eucd
-                         loss_dict['euclidean_loss'] = loss_eucd.item()
-                         epoch_euclidean_loss += loss_eucd.item()
+                                  if not tsdf_features_for_giga:
+                                       print("Warning: Failed to get TSDF features from loaded GIGA model. Skipping affordance loss.")
+                                  else:
+                                       # Get affordance predictions (only need quality for this example)
+                                       affordance_preds = giga_model_eval.forward_affordance(
+                                           tsdf_features=tsdf_features_for_giga,
+                                           p_grasp=giga_query_points
+                                       )
 
+                                       if 'qual' in affordance_preds:
+                                            # Penalize low predicted quality (logits)
+                                            # Higher logit = better quality -> minimize negative logit
+                                            predicted_qual_logits = affordance_preds['qual'] # [B, 1, 1]
+                                            # Affordance loss: encourage high quality logits
+                                            print(f"Predicted qual logits shape: {predicted_qual_logits.shape}")
+                                            print(f"Predicted qual logits: {predicted_qual_logits}")
+                                            afford_loss = -predicted_qual_logits.sum() # Minimize negative quality
+                                            loss_dict['affordance_loss'] = afford_loss
+                                            total_loss += affordance_loss_coef * afford_loss*3
+                                            print(f"Calculated affordance loss: {afford_loss.item():.4f}")
+                                       else:
+                                            print("Warning: 'qual' not found in loaded GIGA model output. Skipping affordance loss.")
 
-                # Apply Diffusion Reweighting if enabled
-                if reweight_loss_by_coll:
-                     if cost is not None and u_pred_sd is not None:
-                         with th.no_grad():
-                             col_label = batch.get('col_label', None)
-                             if col_label is not None:
-                                 # Calculate collision cost per trajectory point/batch element
-                                 coll_cost_per_element = cost(u_pred_sd, col_label) # Shape [B] or [B, Seq]? Assume [B] for now
-                                 # Simple weighting: increase weight for higher cost (more collision)
-                                 # Normalize cost, add 1, potentially clamp? Cost function details matter here.
-                                 # Example: weight = 1.0 + torch.clamp(coll_cost_per_element / cost_margin, 0, 5) # Clamp max weight
-                                 # This needs careful tuning based on cost function output range
-                                 weight = 1.0 + coll_cost_per_element # Simplified weighting
-                                 weight = weight / weight.mean() # Normalize weights per batch
-                                 # Reshape weight to match loss_ddpm if it's per-element [B, Obs, Seq]
-                                 if len(loss_ddpm.shape) > 1:
-                                     weight = weight.view(-1, *([1]*(len(loss_ddpm.shape)-1)))
+                    print(f"total loss.shape: {total_loss.shape}")
+                    print(f"Total loss: {total_loss.item():.4f}")
+                    loss_dict['total_loss'] = total_loss
 
-                                 loss_ddpm = (loss_ddpm * weight).mean() # Apply weight and take mean
-                             else:
-                                 print("Warning: Reweighting enabled but no 'col_label' for cost function.")
-                                 loss_ddpm = loss_ddpm.mean() # Fallback to simple mean
-                     else:
-                         print("Warning: Reweighting enabled but cost function or predicted trajectory unavailable.")
-                         loss_ddpm = loss_ddpm.mean() # Fallback to simple mean
-                else:
-                     loss_ddpm = loss_ddpm.mean() # Simple mean if not reweighting
-
-                total_loss += diffusion_coef * loss_ddpm
-                loss_dict['diffusion_loss'] = loss_ddpm.item()
-                epoch_diffusion_loss += loss_ddpm.item()
+            # --- Backpropagation ---
+            if total_loss > 0 : # Check if loss is valid before backward pass
+                 if scaler is not None: # Check if scaler is initialized
+                     scaler.scale(total_loss).backward()
+                     scaler.step(optimizer)
+                     scaler.update()
+                 else:
+                     total_loss.backward()
+                     optimizer.step()
 
 
-                # 5. Grasp Quality Loss (GIGA) - BCE loss
-                loss_qual = _qual_loss_fn(pred_grasp_qual, gt_grasp_label.squeeze(-1)).mean() # Mean over points and batch
-                total_loss += grasp_coef * loss_qual
-                loss_dict['grasp_qual_loss'] = loss_qual.item()
-
-                # 6. Grasp Rotation Loss (GIGA) - Min quaternion distance loss
-                loss_rot = _rot_loss_fn(pred_grasp_rot, gt_grasp_rot).mean() # Mean over points and batch
-                total_loss += grasp_coef * loss_rot # Use same grasp_coef
-                loss_dict['grasp_rot_loss'] = loss_rot.item()
-
-                # 7. Grasp Width Loss (GIGA) - Scaled MSE loss
-                loss_width = _width_loss_fn(pred_grasp_width, gt_grasp_width.squeeze(-1)).mean() # Mean over points and batch
-                total_loss += grasp_coef * 0.01 * loss_width # Use GIGA's 0.01 scaling relative to grasp_coef
-                loss_dict['grasp_width_loss'] = loss_width.item()
-
-                # Aggregate grasp losses for logging
-                current_grasp_loss = loss_qual + loss_rot + 0.01 * loss_width
-                epoch_grasp_loss += current_grasp_loss.item() # Log combined grasp loss metric
-
-                # 8. TSDF Prediction Loss (GIGA/Combined) - BCE loss
-                if tsdf_coef > 0:
-                    loss_tsdf = _tsdf_loss_fn(pred_tsdf, gt_tsdf_value.squeeze(-1)).mean() # Mean over points and batch
-                    total_loss += tsdf_coef * loss_tsdf
-                    loss_dict['tsdf_loss'] = loss_tsdf.item()
-                    epoch_tsdf_loss += loss_tsdf.item()
-
-                # Log predicted trajectory statistics if computed
-                if needs_traj and batch_idx == 0:
-                    logging.info(f"  Predicted trajectory shape: {pred_traj_ds.shape}, "
-                                 f"range: [{pred_traj_ds.min().item():.4f}, {pred_traj_ds.max().item():.4f}]")
-                    logging.info(f"  Unnormalized traj shape: {u_pred_sd.shape}, "
-                                 f"range: [{u_pred_sd.min().item():.4f}, {u_pred_sd.max().item():.4f}]")
-
-
-            # --- Backward Pass & Optimization Step ---
-            scaler.scale(total_loss).backward()
-            # Optional: Gradient clipping
-            # scaler.unscale_(optimizer)
-            # th.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            scaler.step(optimizer)
-            scaler.update()
-
+            # --- Learning Rate Step ---
             if lr_scheduler is not None:
                 lr_scheduler.step()
 
-            epoch_total_loss += total_loss.item()
-            global_step += 1
-
             # --- Logging ---
-            log_data = {
-                'train/total_loss': total_loss.item(),
-                'train/lr': optimizer.param_groups[0]['lr'],
-                'train/epoch': epoch,
-                'train/global_step': global_step,
-            }
-            # Add individual losses to log
-            log_data.update({f'train/{k}': v for k, v in loss_dict.items()})
+            step_loss = total_loss.item() if isinstance(total_loss, th.Tensor) else total_loss
+            epoch_total_loss += step_loss
 
-            if writer is not None and log_by == 'step':
+            # Update epoch loss tracking
+            for k, v in loss_dict.items():
+                 if isinstance(v, th.Tensor):
+                     epoch_losses[k] = epoch_losses.get(k, 0.0) + v.item()
+
+            pbar.set_postfix({
+                'loss': f"{step_loss:.4f}",
+                'lr': optimizer.param_groups[0]['lr']
+            })
+
+            # Log step metrics if log_by == 'step'
+            if log_by == 'step' and writer is not None:
+                 log_data = {f'loss/{k}': v.item() if isinstance(v, th.Tensor) else v for k, v in loss_dict.items()}
+                 log_data['lr'] = optimizer.param_groups[0]['lr']
                  writer.log(log_data, step=global_step)
 
-            progress_bar.set_postfix(loss=total_loss.item())
+            global_step += 1
+            if step_max is not None and global_step >= step_max:
+                 logging.info(f"Reached max steps ({step_max}). Stopping training.")
+                 print(f"Reached max steps ({step_max}). Stopping training.")
+                 # --- Save Final Checkpoint Before Exiting ---
+                 ckpt_path = os.path.join(log_dir, f"{training_mode}_step_{global_step}.pth")
+                 save_dict = {
+                     'epoch': epoch,
+                     'global_step': global_step,
+                     'model': model.state_dict(),
+                     'optimizer': optimizer.state_dict(),
+                     'scaler': scaler.state_dict() if scaler is not None else None,
+                     'config': model.cfg.__dict__ if model.cfg is not None else None,
+                 }
+                 if lr_scheduler is not None:
+                     save_dict['lr_scheduler'] = lr_scheduler.state_dict()
+                 if normalizer is not None and hasattr(normalizer, 'state_dict'):
+                     save_dict['normalizer'] = normalizer.state_dict()
+                 logging.info(f"GIGA Stage: Preparing to save checkpoint. Keys: {list(save_dict.keys())}")
+                 logging.info(f"GIGA Stage: Type of model.cfg: {type(model.cfg)}") # Check if config exists
+                 if 'model' not in save_dict or 'config' not in save_dict:
+                      logging.error("GIGA Stage: CRITICAL - 'model' or 'config' key missing BEFORE saving!")
+                 elif save_dict['config'] is None:
+                      logging.warning("GIGA Stage: 'config' key is None BEFORE saving!")
+                 save_ckpt(save_dict, ckpt_path)
+                 logging.info(f"Saved final checkpoint to {ckpt_path}")
+                 print(f"Saved final checkpoint to {ckpt_path}")
+                 last_ckpt_path = ckpt_path # Store path
+                 return last_ckpt_path # Return immediately after saving final step checkpoint
 
-            # Log loss values in detail
-            if batch_idx % 10 == 0:  # Log every 10 batches
-                logging.info("  Loss components:")
-                logging.info(f"    Diffusion loss: {loss_ddpm.item():.6f} (coef: {diffusion_coef})")
-                
-                if collision_coef > 0:
-                    logging.info(f"    Collision loss: {loss_coll.item():.6f} (coef: {collision_coef})")
-                
-                if distance_coef > 0:
-                    logging.info(f"    Distance loss: {loss_dist.item():.6f} (coef: {distance_coef})")
-                    
-                if euclidean_coef > 0:
-                    logging.info(f"    Euclidean loss: {loss_eucd.item():.6f} (coef: {euclidean_coef})")
-                    
-                logging.info(f"    Grasp quality loss: {loss_qual.item():.6f} (coef: {grasp_coef})")
-                logging.info(f"    Grasp rotation loss: {loss_rot.item():.6f} (coef: {grasp_coef})")
-                logging.info(f"    Grasp width loss: {loss_width.item():.6f} (coef: {grasp_coef*0.01})")
-                
-                if tsdf_coef > 0:
-                    logging.info(f"    TSDF loss: {loss_tsdf.item():.6f} (coef: {tsdf_coef})")
-                    
-                logging.info(f"    TOTAL loss: {total_loss.item():.6f}")
-
-            # Log gradient statistics before stepping
-            if batch_idx % 10 == 0:  # Only log periodically
-                # Get gradient statistics
-                grad_norms = []
-                max_grad = 0
-                for name, param in model.named_parameters():
-                    if param.grad is not None:
-                        grad_norm = param.grad.norm().item()
-                        grad_norms.append(grad_norm)
-                        max_grad = max(max_grad, grad_norm)
-                
-                if grad_norms:
-                    avg_grad = sum(grad_norms) / len(grad_norms)
-                    logging.info(f"  Gradients: avg norm: {avg_grad:.6f}, max norm: {max_grad:.6f}, "
-                                 f"non-zero params: {len(grad_norms)}")
-
-            if batch_idx % 10 == 0:
-                logging.info(f"  Optimizer step complete, current LR: {optimizer.param_groups[0]['lr']:.6e}")
-
-            # --- Gradient Inspection ---
-            if batch_idx % 50 == 0: # Check gradients periodically (e.g., every 50 batches)
-                logging.info(f"--- Gradient Check @ Epoch {epoch+1}, Batch {batch_idx} ---")
-                found_grads = {}
-                zero_grads = {}
-                none_grads = {}
-                max_grads = {}
-                avg_grads = {}
-
-                total_params = 0
-                params_with_grad = 0
-
-                for name, param in model.named_parameters():
-                    if param.requires_grad: # Only check parameters that require gradients
-                        total_params += 1
-                        if param.grad is not None:
-                            params_with_grad += 1
-                            grad_norm = param.grad.norm().item()
-                            is_zero = (param.grad == 0).all().item()
-                            component_name = name.split('.')[0] # Get top-level module name (e.g., 'tsdf_encoder', 'blocks', 'decoder_qual')
-
-                            if component_name not in found_grads:
-                                found_grads[component_name] = []
-                                zero_grads[component_name] = []
-                                max_grads[component_name] = 0.0
-                                avg_grads[component_name] = []
-
-                            found_grads[component_name].append(name)
-                            avg_grads[component_name].append(grad_norm)
-                            max_grads[component_name] = max(max_grads[component_name], grad_norm)
-
-                            if is_zero:
-                                zero_grads[component_name].append(name)
-                                logging.warning(f"  ZERO GRADIENT detected for: {name}")
-
-                        else:
-                            component_name = name.split('.')[0]
-                            if component_name not in none_grads:
-                                none_grads[component_name] = []
-                            none_grads[component_name].append(name)
-                            logging.warning(f"  NO GRADIENT (None) detected for: {name}")
-
-                logging.info(f"  Total Trainable Params: {total_params}, Params with Gradients: {params_with_grad}")
-
-                logging.info("  --- Gradient Stats by Component ---")
-                all_components = set(found_grads.keys()) | set(none_grads.keys())
-                for comp in sorted(list(all_components)):
-                    num_found = len(found_grads.get(comp, []))
-                    num_zero = len(zero_grads.get(comp, []))
-                    num_none = len(none_grads.get(comp, []))
-                    max_g = max_grads.get(comp, 0.0)
-                    avg_g = sum(avg_grads.get(comp, [])) / num_found if num_found > 0 else 0.0
-                    logging.info(f"    {comp}: Found={num_found}, Zero={num_zero}, None={num_none}, AvgNorm={avg_g:.4e}, MaxNorm={max_g:.4e}")
-
-                logging.info(f"--- End Gradient Check ---")
-
-
-        # --- End of Epoch ---
+        # --- Epoch End ---
         avg_epoch_loss = epoch_total_loss / num_batches
-        ic(f"Epoch {epoch+1} finished. Avg Total Loss: {avg_epoch_loss:.4f}")
+        logging.info(f"Epoch {epoch+1} Average Loss: {avg_epoch_loss:.4f}")
+        print(f"Epoch {epoch+1} Average Loss: {avg_epoch_loss:.4f}")
 
-        # Log epoch summary
-        logging.info(f"\n=== Epoch {epoch+1} Summary ===")
-        logging.info(f"  Avg total loss: {avg_epoch_loss:.6f}")
-        logging.info(f"  Avg diffusion loss: {epoch_diffusion_loss / num_batches:.6f}")
-        logging.info(f"  Avg grasp loss: {epoch_grasp_loss / num_batches:.6f}")
-        
-        if tsdf_coef > 0:
-            logging.info(f"  Avg TSDF loss: {epoch_tsdf_loss / num_batches:.6f}")
-        
-        if collision_coef > 0:
-            logging.info(f"  Avg collision loss: {epoch_collision_loss / num_batches:.6f}")
-        
-        if distance_coef > 0:
-            logging.info(f"  Avg distance loss: {epoch_distance_loss / num_batches:.6f}")
-        
-        if euclidean_coef > 0:
-            logging.info(f"  Avg euclidean loss: {epoch_euclidean_loss / num_batches:.6f}")
+        # Log epoch metrics if log_by == 'epoch'
+        if log_by == 'epoch' and writer is not None:
+             log_data = {f'loss_epoch/{k}': v / num_batches for k, v in epoch_losses.items()}
+             log_data['epoch'] = epoch + 1
+             writer.log(log_data, step=global_step) # Log against global step
 
-        # Log epoch averages
-        if writer is not None:
-             epoch_log_data = {
-                 'train/epoch_avg_total_loss': avg_epoch_loss,
-                 'train/epoch_avg_diffusion_loss': epoch_diffusion_loss / num_batches,
-                 'train/epoch_avg_grasp_loss': epoch_grasp_loss / num_batches, # Combined grasp loss
-                 'train/epoch_avg_tsdf_loss': epoch_tsdf_loss / num_batches if tsdf_coef > 0 else 0,
-                 'train/epoch_avg_collision_loss': epoch_collision_loss / num_batches if collision_coef > 0 else 0,
-                 'train/epoch_avg_distance_loss': epoch_distance_loss / num_batches if distance_coef > 0 else 0,
-                 'train/epoch_avg_euclidean_loss': epoch_euclidean_loss / num_batches if euclidean_coef > 0 else 0,
-                 'epoch': epoch + 1 # Log epoch number itself
-             }
-             # Log at the end of the epoch, using global_step as the step counter
-             writer.log(epoch_log_data, step=global_step)
-
-
-        # --- Save Checkpoint ---
-        if (epoch + 1) % save_epoch == 0 or (epoch + 1) == num_epochs:
-            ckpt_path = os.path.join(log_dir, f"ckpt_epoch_{epoch+1}.pth")
-            save_data = {
+        # --- Save Checkpoint (End of Epoch) ---
+        if (epoch + 1) % save_epoch == 0:
+            ckpt_path = os.path.join(log_dir, f"{training_mode}_epoch_{epoch+1:04d}.pth")
+            save_dict = {
                 'epoch': epoch,
                 'global_step': global_step,
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
-                'scaler': scaler.state_dict(),
-                # Save normalizer state if it's not identity/None
-                'normalizer': normalizer.state_dict() if hasattr(normalizer, 'state_dict') else \
-                              ({'mean': normalizer.mean, 'std': normalizer.std} if normalizer else None),
+                'scaler': scaler.state_dict() if scaler is not None else None,
+                'config': model.cfg.__dict__ if model.cfg is not None else None,
             }
             if lr_scheduler is not None:
-                save_data['lr_scheduler'] = lr_scheduler.state_dict()
+                save_dict['lr_scheduler'] = lr_scheduler.state_dict()
+            if normalizer is not None and hasattr(normalizer, 'state_dict'):
+                 save_dict['normalizer'] = normalizer.state_dict() # Save normalizer state
 
-            save_ckpt(save_data, ckpt_path)
-            ic(f"Checkpoint saved to {ckpt_path}")
-            logging.info(f"Checkpoint saved: {ckpt_path}")
-            logging.info(f"Saved model state with {sum(p.numel() for p in model.parameters())} parameters")
+            # --- Add Debug Logging Here (GIGA Stage Epoch Save) ---
+            if training_mode == 'giga':
+                logging.info(f"GIGA Stage (Epoch Save): Preparing save_dict. Keys: {list(save_dict.keys())}")
+                logging.info(f"GIGA Stage (Epoch Save): Type of config: {type(save_dict.get('config'))}")
+                if 'config' not in save_dict:
+                    logging.error("GIGA Stage (Epoch Save): 'config' key MISSING before save_ckpt!")
+                elif save_dict.get('config') is None:
+                     logging.warning("GIGA Stage (Epoch Save): 'config' key is None before save_ckpt!")
+            # --- End Debug Logging ---
 
-    # --- End of Training ---
+            save_ckpt(save_dict, ckpt_path)
+            logging.info(f"Saved checkpoint to {ckpt_path}")
+            print(f"Saved checkpoint to {ckpt_path}")
+            last_ckpt_path = ckpt_path # Update last saved path
+
+    # --- End Epoch Loop ---
     end_time = time.time()
-    ic(f"Training finished in {(end_time - start_time)/60:.2f} minutes.")
-    logging.info(f"\n=== Training Complete ===")
-    logging.info(f"Total training time: {(end_time - start_time)/60:.2f} minutes")
-    logging.info(f"Final global step: {global_step}")
-    logging.info("----------------------\n")
-    if writer is not None:
-        writer.finish()
+    logging.info(f"Training finished in {(end_time - start_time)/60:.2f} minutes.")
+    print(f"Training finished in {(end_time - start_time)/60:.2f} minutes.")
 
-# --- Main Training Function (No Hydra/Config) ---
+    # Return the path of the last checkpoint saved (could be None if save_epoch > num_epochs and step_max not reached)
+    return last_ckpt_path
+
+
+# === MODIFIED Main `train` Function ===
 def train(
-    log_dir_base: str = "runs/combined_train_standalone",
+    # --- Stage Control ---
+    training_mode: str = 'joint', # 'giga', 'presto', 'joint' (original - now invalid)
+    giga_checkpoint_path: Optional[str] = None, # Path to load pre-trained GIGA for Presto stage
+    # --- Logging/Saving ---
+    log_dir_base: str = "runs/combined_train_stages",
     use_wandb: bool = False,
-    wandb_project: str = "presto_giga_combined",
-    wandb_entity: Optional[str] = None, # Set your wandb entity here
+    wandb_project: str = "presto_giga_stages",
+    wandb_entity: Optional[str] = None,
+    save_epoch: int = 10,
+    log_by: str = 'epoch',
     # --- Key Hyperparameters ---
     num_epochs: int = 50,
     batch_size: int = 4,
     learning_rate: float = 3e-4,
     weight_decay: float = 1e-2,
-    lr_warmup_steps: int = 100, # Reduced for shorter dummy training
-    lr_schedule: str = 'cos', # 'cos' or None
-    save_epoch: int = 10,
-    log_by: str = 'epoch', # <-- ADD THIS PARAMETER (default to 'epoch')
+    lr_warmup_steps: int = 100,
+    lr_schedule: str = 'cos',
     # --- Loss Coefficients ---
     diffusion_coef: float = 1.0,
-    grasp_coef: float = 1.0, # GIGA combined loss coef
-    tsdf_coef: float = 0.5,  # TSDF prediction loss coef
-    collision_coef: float = 0.5, # PRESTO aux collision loss coef
-    distance_coef: float = 0.5,  # PRESTO aux distance loss coef
-    euclidean_coef: float = 0.5, # PRESTO aux euclidean loss coef
-    reweight_loss_by_coll: bool = True, # PRESTO reweighting flag
-    # --- Diffusion Settings ---
+    grasp_coef: float = 1.0,
+    tsdf_coef: float = 0.5,
+    collision_coef: float = 0.5,
+    distance_coef: float = 0.5,
+    euclidean_coef: float = 0.5,
+    affordance_loss_coef: float = 0.2, # NEW coefficient for Presto's affordance loss
+    reweight_loss_by_coll: bool = True,
+    # --- Diffusion Settings (for Presto) ---
     beta_schedule='squaredcos_cap_v2',
     beta_start=0.0001,
     beta_end=0.02,
     num_train_timesteps=1000,
-    prediction_type='epsilon', # 'epsilon' or 'sample'
-    x0_type: str = 'step', # 'step' or 'iter'
+    prediction_type='epsilon',
+    x0_type: str = 'step',
     x0_iter: int = 1,
-    step_max: Optional[int] = None, # Max diffusion timestep to use
+    step_max: Optional[int] = None,
     # --- Model Dimensions (from dummy data) ---
     seq_len: int = 50,
-    obs_dim: int = 7,      # Franka joints
-    cond_dim: int = 104,   # Example condition dim
-    tsdf_dim: int = 32,    # TSDF grid size
-    num_grasp_points: int = 64, # Num grasp queries
-    num_tsdf_points: int = 32,  # Num TSDF queries
-    # --- Model Architecture Params (Example for PrestoGIGA) ---
-    model_depth: int = 12,
-    model_num_heads: int = 6,
-    model_hidden_size: int = 384,
-    model_patch_size: int = 1, # For 1D DiT
-    giga_encoder: str = 'voxel_simple_local', # Example GIGA encoder
-    giga_decoder: str = 'simple_local', # Example GIGA decoder
-    giga_c_dim: int = 32, # GIGA feature dimension
+    obs_dim: int = 7,
+    cond_dim: int = 104,
+    tsdf_dim: int = 32,
+    num_grasp_points: int = 64,
+    num_tsdf_points: int = 32,
+    # --- Model Architecture Params ---
+    # Shared / GIGA
+    giga_encoder_type: str = 'voxel_simple_local',
+    giga_decoder_type: str = 'simple_local',
+    giga_c_dim: int = 32,
+    giga_plane_resolution: int = 32, # Resolution for encoder's output planes
+    giga_rot_dim: int = 4,
+    # Presto specific
+    presto_depth: int = 12,
+    presto_num_heads: int = 6,
+    presto_hidden_size: int = 384,
+    presto_patch_size: int = 1,
     # --- Hardware ---
-    device_str: str = "auto", # "auto", "cuda", "cpu"
-    use_amp: bool = True, # Automatic Mixed Precision
+    device_str: str = "auto",
+    use_amp: bool = True,
     # --- Checkpointing ---
-    load_checkpoint_path: Optional[str] = None, # Path to load checkpoint from
-    # --- Cost Function Params (if CuroboCost is used) ---
-    cost_margin: float = 0.1, # Example margin for collision cost
-    # Add other cost-related params if needed
+    load_checkpoint_path: Optional[str] = None, # Checkpoint for the *current* stage model
+    # --- Cost Function Params ---
+    cost_margin: float = 0.1,
 ):
     """
-    Sets up and runs the training loop with hardcoded parameters.
+    Main training function supporting two stages: 'giga' and 'presto'.
+    Returns the path to the last saved checkpoint for the completed stage.
     """
-    # --- Device Setup ---
+    if training_mode == 'joint':
+        raise ValueError("Training mode 'joint' is deprecated. Use 'giga' or 'presto'.")
+    if training_mode == 'presto' and giga_checkpoint_path is None:
+        print("Warning: Running Presto training without a pre-trained GIGA model specified via 'giga_checkpoint_path'. Affordance loss will be disabled.")
+        affordance_loss_coef = 0.0 # Disable loss if no GIGA model provided
+
+    # --- Setup (Logging, Device, Folders, WandB) ---
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = os.path.join(log_dir_base, f"{training_mode}_{timestamp}")
+    os.makedirs(log_dir, exist_ok=True)
+    # Setup file logging within the specific run directory
+    log_file_path = os.path.join(log_dir, 'train.log')
+    # Remove previous handlers
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler(log_file_path),
+            logging.StreamHandler() # Also print to console
+        ]
+    )
+    logging.info(f"--- Starting Training Run ---")
+    logging.info(f"Mode: {training_mode.upper()}")
+    logging.info(f"Log directory: {log_dir}")
+
+
+    # Device
     if device_str == "auto":
         device = "cuda" if th.cuda.is_available() else "cpu"
     else:
         device = device_str
-    ic(f"Using device: {device}")
+    logging.info(f"Using device: {device}")
 
-    # --- Path Setup ---
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = os.path.join(log_dir_base, timestamp)
-    os.makedirs(log_dir, exist_ok=True)
-    ic(f"Logging to: {log_dir}")
-
-    # --- Logger ---
+    # WandB
     writer = None
-    if use_wandb and WandbLogger is not None:
+    if use_wandb:
+        # Make sure wandb is installed: pip install wandb
         try:
+            # Pass all hyperparameters to wandb config
+            config_dict = locals()
+            # Remove non-serializable items if necessary
+            config_dict.pop('writer', None)
+            config_dict.pop('device', None) # Log device_str instead
+
             writer = WandbLogger(
                 project=wandb_project,
                 entity=wandb_entity,
-                # group=None, # Optional: group runs
-                run_id=None, # Optional: resume run
-                mode=None,
-                # Pass key hyperparameters to wandb config
-                cfg={
-                    'learning_rate': learning_rate, 'batch_size': batch_size,
-                    'num_epochs': num_epochs, 'diffusion_coef': diffusion_coef,
-                    'grasp_coef': grasp_coef, 'tsdf_coef': tsdf_coef,
-                    'collision_coef': collision_coef, 'distance_coef': distance_coef,
-                    'euclidean_coef': euclidean_coef, 'obs_dim': obs_dim,
-                    'cond_dim': cond_dim, 'tsdf_dim': tsdf_dim,
-                    'model_depth': model_depth, 'model_hidden_size': model_hidden_size,
-                    'beta_schedule': beta_schedule, 'prediction_type': prediction_type,
-                 }
+                output_dir=log_dir,
+                config=config_dict,
+                name=f"{training_mode}_{timestamp}" # Unique run name
             )
-            ic("Using WandbLogger.")
+            logging.info(f"WandB logging enabled. Project: {wandb_project}, Run: {writer.run_id}")
+        except ImportError:
+            logging.warning("WandB not installed. Skipping WandB logging.")
         except Exception as e:
-            print(f"Failed to initialize WandbLogger: {e}. Logging disabled.")
-            writer = None
-    else:
-        ic("Wandb logging disabled.")
+            logging.warning(f"Failed to initialize WandB: {e}. Skipping WandB logging.")
 
 
-    # --- Normalizer ---
-    # Using identity normalizer for dummy data, replace if using real data stats
-    normalizer = Normalize.identity(dim=obs_dim, device=device)
-    ic("Using identity normalizer.")
+    # --- Normalizer (Identity for now) ---
+    # Use 'center' and 'radius' as expected by Normalize.__init__
+    normalizer = Normalize(center=th.zeros(obs_dim), radius=th.ones(obs_dim))
+    logging.info("Initialized identity normalizer.")
 
-    # --- Cost Function ---
+
+    # --- Cost Function (Primarily for Presto) ---
     cost = None
-    from presto.cost.curobo_cost import CuroboCost
-    from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
-    if CuroboCost is not None and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
-         ic("Instantiating CuroboCost...")
-         # Use default CuroboCost config for simplicity
-         from presto.cost.curobo_cost import CuroboCost # Ensure import
-         try:
-             cost_config = CuroboCost.Config() # Use default config
-             cost = CuroboCost(cfg=cost_config, batch_size=batch_size, device=device)
-             ic(f"CuroboCost instantiated with margin: {cost_margin}")
-         except Exception as e:
-             print(f"Failed to instantiate CuroboCost: {e}. Disabling related losses.")
-             cost = None
-             collision_coef = 0.0
-             distance_coef = 0.0
-             reweight_loss_by_coll = False
+    if training_mode == 'presto' and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
+        # (Keep CuroboCost instantiation logic as before)
+        # ... (copy logic from original train function lines 762-780)
+        try:
+            from presto.cost.curobo_cost import CuroboCost # Ensure import
+            ic("Instantiating CuroboCost...")
+            cost_config = CuroboCost.Config() # Use default config
+            # Adjust batch size dynamically in loop if needed, or ensure it matches
+            cost = CuroboCost(cfg=cost_config, batch_size=batch_size, device=device)
+            ic(f"CuroboCost instantiated with margin: {cost_margin}") # Assuming margin is handled internally
+            logging.info("CuroboCost instantiated.")
+        except ImportError:
+            print("CuroboCost not found. Install curobo_python to use cost functions.")
+            logging.warning("CuroboCost not found. Disabling related losses.")
+            cost = None
+            collision_coef = 0.0
+            distance_coef = 0.0
+            reweight_loss_by_coll = False
+        except Exception as e:
+            print(f"Failed to instantiate CuroboCost: {e}. Disabling related losses.")
+            logging.warning(f"Failed to instantiate CuroboCost: {e}. Disabling related losses.")
+            cost = None
+            collision_coef = 0.0
+            distance_coef = 0.0
+            reweight_loss_by_coll = False
     else:
-        ic("CuroboCost not needed or not available.")
+        logging.info("CuroboCost not needed for this stage or disabled.")
 
 
-    # --- Forward Kinematics ---
+    # --- Forward Kinematics (Primarily for Presto) ---
     current_fk_fn = None
-    if euclidean_coef > 0:
-        current_fk_fn = franka_fk # Use imported fk function
-        ic("Using franka_fk function for Euclidean loss.")
+    if training_mode == 'presto' and (euclidean_coef > 0 or affordance_loss_coef > 0):
+        try:
+            from presto.data.franka_util import franka_fk # Ensure import
+            current_fk_fn = franka_fk
+            logging.info("Using franka_fk function.")
+        except ImportError:
+             logging.error("franka_fk not found. Cannot compute Euclidean or Affordance loss.")
+             current_fk_fn = None
+             euclidean_coef = 0.0
+             affordance_loss_coef = 0.0 # Disable if FK is missing
     else:
-        ic("Euclidean loss disabled, FK function not needed.")
+        logging.info("FK function not needed for this stage or disabled.")
 
 
-    # --- Model ---
-    ic("Instantiating PrestoGIGA model...")
-    # Define model config explicitly (can be a dict or ModelConfig dataclass)
+    # --- Model Instantiation ---
+    model = None
+    model_config_ns = None # To store the config used
 
-    # Define the resolution used for the 2D feature planes generated by the encoder
-    # This should match the 'plane_resolution' in encoder_kwargs
-    giga_plane_resolution = 32 # Example, adjust if needed
-
-    model_config = {
-         'input_size': seq_len,
-         'patch_size': 2,      # Example patch size
-         'in_channels': obs_dim,
-         'hidden_size': model_hidden_size,
-         'num_layer': model_depth,
-         'num_heads': model_num_heads,
-         'cond_dim': cond_dim,
-         'adaln_scale': 1.0,
-         'learn_sigma': False, # Set based on diffusion needs
-         'use_cond': True,
-         'use_flash_attn': False, # Set based on availability/preference
-         # GIGA/ConvONet specific parts
-         'grid_size': tsdf_dim, # Original TSDF input grid size
-         'encoder': giga_encoder, # e.g., 'voxel_simple_local'
-         'encoder_kwargs': {
-             # --- MODIFICATION: Request only 2D planes ---
-             'c_dim': 32,
-             'plane_type': ['xz', 'xy', 'yz'], # REMOVED 'grid'
-             # --- Ensure resolution matches giga_plane_resolution ---
-             'plane_resolution': 32,
-             'dim': 3,
-    
-             # --- Keep other encoder settings ---
-             'grid_resolution': tsdf_dim, # Keep grid_resolution if encoder needs it internally
-             'unet3d': False, # Example
-             'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': 3, "in_channels" : 7, "out_channels" : 7}, # Example
-             'unet': False, # Add unet flag if LocalVoxelEncoder uses it for planes
-             'unet_kwargs': { 'depth': 3,
-                'merge_mode': 'concat',
-                'start_filts': 32, "num_classes" : 2}, # Add unet kwargs if needed
-         },
-         'decoder': giga_decoder, # e.g., 'simple_local'
-         'decoder_kwargs': {'dim': 3, 'sample_mode': 'bilinear', 'hidden_size': 150, 'c_dim': 32, 'concat_feat': True},
-         'c_dim': 32, # Feature dim from GIGA encoder *per plane*
-         'padding': 0.1,
-         'n_classes': 1, # For grasp quality
-         'mlp_ratio': 4.0,
-         'class_dropout_prob': 0.0,
-         'use_pos_emb': False, # Set based on DiT needs
-         'dim_pos_emb': 3 * 2 * 32, # Example
-         'sin_emb_x': 0,
-         'cat_emb_x': False,
-         'use_cond_token': False,
-         'use_cloud': False,
-         'use_grasp': grasp_coef > 0, # Enable grasp head if coefficient > 0
-         'use_tsdf': tsdf_coef > 0,   # Enable TSDF head if coefficient > 0
-         'decoder_type': giga_decoder,
-         'use_joint_embeddings': True, # Whether to concat diffusion + tsdf embeddings
-         'encoder_type': giga_encoder,
-         # --- ADDED: Pass resolution to TSDFEmbedder ---
-         'tsdf_embedder_resolution': giga_plane_resolution,
-    }
-    # Convert dict to namespace/dataclass if PrestoGIGA expects it
-    # Assuming PrestoGIGA init can handle the extra 'tsdf_embedder_resolution' key
-    # or modify PrestoGIGA.__init__ to accept and pass it to TSDFEmbedder
-    model_config_ns = dict_to_namespace(model_config) # Helper function assumed
-
-    # --- Ensure PrestoGIGA.__init__ uses tsdf_embedder_resolution ---
-    # You might need to modify PrestoGIGA.__init__ like this:
-    # def __init__(self, cfg):
-    #     ...
-    #     tsdf_embed_res = getattr(cfg, 'tsdf_embedder_resolution', 32) # Default if not provided
-    #     self.tsdf_embedder = TSDFEmbedder(
-    #         hidden_size=cfg.hidden_size,
-    #         c_dim=cfg.c_dim,
-    #         input_resolution=tsdf_embed_res
-    #     )
-    #     ...
-
-    model = PrestoGIGA(model_config_ns).to(device)
-    ic(f"Model instantiated with {sum(p.numel() for p in model.parameters())} parameters.")
-
-
-    # --- Scheduler ---
-    ic("Instantiating Diffusion Scheduler...")
-    # Define diffusion config explicitly (can be a dict or DiffusionConfig dataclass)
-    diffusion_config = {
-        'beta_schedule': beta_schedule,
-        'beta_start': beta_start,
-        'beta_end': beta_end,
-        'num_train_timesteps': num_train_timesteps,
-        'prediction_type': prediction_type,
-        # Add other relevant scheduler params if needed, e.g., for DDIM
-        'clip_sample': False, # Common DDIM parameter
-        'set_alpha_to_one': False, # Common DDIM parameter
-    }
-    # Use get_scheduler factory or instantiate directly, e.g., DDPMScheduler
-    # sched = get_scheduler(diffusion_config)
-    if prediction_type == 'epsilon':
-        sched = DDPMScheduler(
-            num_train_timesteps=diffusion_config['num_train_timesteps'],
-            beta_schedule=diffusion_config['beta_schedule'],
-            beta_start=diffusion_config['beta_start'],
-            beta_end=diffusion_config['beta_end'],
-            prediction_type=diffusion_config['prediction_type'],
+    # GIGA Stage
+    if training_mode == 'giga':
+        logging.info("Instantiating GIGA model...")
+        giga_config = GIGAConfig(
+            encoder_type=giga_encoder_type,
+            encoder_kwargs={ # Explicitly define encoder kwargs for GIGA
+                'plane_type': ['xy', 'xz', 'yz'],
+                'plane_resolution': giga_plane_resolution,
+                'grid_resolution': tsdf_dim, # Base grid res
+                'c_dim': giga_c_dim,
+                # Add other necessary encoder params like unet flags/kwargs if needed
+                'unet': False, # Example
+                'unet3d': False, # Example
+                'unet_kwargs': { 'depth': 3, 'merge_mode': 'concat', 'start_filts': 32 }, # Example
+            },
+            decoder_type=giga_decoder_type,
+            decoder_kwargs={ # Explicitly define decoder kwargs for GIGA
+                'dim': 3,
+                'sample_mode': 'bilinear',
+                'hidden_size': 32, # Example decoder hidden size
+                'concat_feat': True,
+                'c_dim': giga_c_dim # Ensure decoder knows input feature dim
+            },
+            c_dim=giga_c_dim,
+            rot_dim=giga_rot_dim,
+            use_tsdf_pred=(tsdf_coef > 0), # Enable TSDF head if loss coeff > 0
+            padding=0.1, # Example padding
+            hidden_size=presto_hidden_size, # Use a hidden size, e.g., from Presto config for consistency if needed
+            use_amp=use_amp,
         )
-    else: # Example for 'sample' prediction type
-         sched = DDPMScheduler( # Adjust scheduler type if needed for 'sample'
-            num_train_timesteps=diffusion_config['num_train_timesteps'],
-            beta_schedule=diffusion_config['beta_schedule'],
-            beta_start=diffusion_config['beta_start'],
-            beta_end=diffusion_config['beta_end'],
-            prediction_type=diffusion_config['prediction_type'],
+        model = GIGA(giga_config).to(device)
+        model_config_ns = giga_config # Store config
+
+    # Presto Stage
+    elif training_mode == 'presto':
+        logging.info("Instantiating Presto model...")
+        presto_config = PrestoConfig(
+            # Diffusion params
+            input_size=seq_len,
+            patch_size=presto_patch_size,
+            in_channels=obs_dim,
+            hidden_size=presto_hidden_size,
+            num_layer=presto_depth,
+            num_heads=presto_num_heads,
+            mlp_ratio=4.0,
+            class_dropout_prob=0.0,
+            cond_dim=cond_dim,
+            learn_sigma=False, # Example: predict epsilon only
+            use_cond=True,
+            use_pos_emb=False,
+            dim_pos_emb=3 * 2 * 32, # Example
+            sin_emb_x=0,
+            cat_emb_x=False,
+            use_cond_token=False,
+            use_cloud=False,
+            use_joint_embeddings=True, # Condition on TSDF embedding
+            # Encoder params (for TSDF conditioning)
+            encoder_type=giga_encoder_type, # Use the same encoder type as GIGA
+             encoder_kwargs={ # Ensure kwargs match GIGA's for consistency
+                'plane_type': ['xy', 'xz', 'yz'],
+                'plane_resolution': giga_plane_resolution,
+                'grid_resolution': tsdf_dim,
+                'c_dim': giga_c_dim,
+                'unet': False, # Example
+                'unet3d': False, # Example
+                'unet_kwargs': { 'depth': 3, 'merge_mode': 'concat', 'start_filts': 32 }, # Example
+            },
+            c_dim=giga_c_dim, # Feature dim from encoder
+            padding=0.1, # Example padding
+            use_amp=use_amp,
+            # Decoder params are not directly used by Presto model itself
+            decoder_type=giga_decoder_type, # Keep for consistency if needed elsewhere
+            decoder_kwargs={}, # Not directly used by Presto init
         )
-    ic(f"Scheduler: {type(sched).__name__}")
+        model = Presto(presto_config).to(device)
+        model_config_ns = presto_config # Store config
+
+    logging.info(f"Model instantiated: {type(model).__name__}")
+    logging.info(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
+    # Log the model config
+    logging.info("\n=== Model Configuration ===")
+    for key, value in model_config_ns.__dict__.items():
+         # Avoid logging large nested dicts directly if too verbose
+         if isinstance(value, dict) and len(str(value)) > 100:
+              logging.info(f"  {key}: {{...}}") # Log placeholder for large dicts
+         else:
+              logging.info(f"  {key}: {value}")
+
+
+    # --- Load Pre-trained GIGA Model (for Presto Stage 2) ---
+    giga_model_eval = None
+    if training_mode == 'presto' and giga_checkpoint_path is not None:
+        logging.info(f"Loading pre-trained GIGA model from: {giga_checkpoint_path}")
+        if not os.path.exists(giga_checkpoint_path):
+            logging.error(f"GIGA checkpoint not found at {giga_checkpoint_path}. Cannot use affordance loss.")
+            affordance_loss_coef = 0.0
+        else:
+            try:
+                giga_ckpt = th.load(giga_checkpoint_path, map_location='cpu')
+                logging.info(f"Presto Stage: Successfully loaded GIGA ckpt. Keys found: {list(giga_ckpt.keys())}")
+
+                # Ensure the checkpoint contains GIGA model state and config dict
+                if 'model' not in giga_ckpt or 'config' not in giga_ckpt:
+                     logging.error("Presto Stage: Checkpoint does not contain 'model' state_dict or 'config' dict. Disabling affordance loss.")
+                     giga_model_eval = None
+                     affordance_loss_coef = 0.0
+                elif giga_ckpt['config'] is None:
+                     logging.error("Presto Stage: Found 'config' key but it is None. Disabling affordance loss.")
+                     giga_model_eval = None
+                     affordance_loss_coef = 0.0
+                else:
+                     logging.info("Presto Stage: Found 'model' and 'config' keys in GIGA checkpoint.")
+                     # Reconstruct GIGAConfig from the saved dictionary
+                     saved_config_dict = giga_ckpt['config']
+                     try:
+                         # Assuming GIGAConfig can be initialized from keyword arguments
+                         giga_config = GIGAConfig(**saved_config_dict)
+                         logging.info("Presto Stage: Reconstructed GIGAConfig from saved dict.")
+                     except Exception as config_e:
+                         logging.error(f"Presto Stage: Failed to reconstruct GIGAConfig from dict: {config_e}. Disabling affordance loss.")
+                         giga_model_eval = None
+                         affordance_loss_coef = 0.0
+                         # Skip model loading if config failed
+                         raise config_e # Or handle differently
+
+                     # Instantiate GIGA model using the *reconstructed* config
+                     giga_model_eval = GIGA(giga_config).to(device) # Move to target device
+                     giga_model_eval.load_state_dict(giga_ckpt['model'])
+                     giga_model_eval.eval() # Set to evaluation mode
+                     logging.info(f"GIGA model eval config: {giga_model_eval.cfg}")
+                     logging.info("Successfully loaded pre-trained GIGA model for evaluation.")
+
+            except Exception as e:
+                # Log the broader exception if loading/reconstruction failed
+                logging.error(f"Error loading GIGA checkpoint or reconstructing config: {e}. Disabling affordance loss.")
+                giga_model_eval = None
+                affordance_loss_coef = 0.0
+
+
+    # --- Scheduler (Only for Presto stage) ---
+    sched = None
+    if training_mode == 'presto':
+        logging.info("Instantiating Diffusion Scheduler...")
+        # (Keep scheduler instantiation logic as before, using DDPMScheduler)
+        # ... (copy logic from original train function lines 874-904)
+        if prediction_type == 'epsilon':
+            sched = DDPMScheduler(
+                num_train_timesteps=num_train_timesteps,
+                beta_schedule=beta_schedule,
+                beta_start=beta_start,
+                beta_end=beta_end,
+                prediction_type=prediction_type,
+            )
+        else: # Example for 'sample' prediction type
+             sched = DDPMScheduler( # Adjust scheduler type if needed for 'sample'
+                num_train_timesteps=num_train_timesteps,
+                beta_schedule=beta_schedule,
+                beta_start=beta_start,
+                beta_end=beta_end,
+                prediction_type=prediction_type,
+            )
+        sched.set_timesteps(num_train_timesteps) # Set inference steps = train steps
+        logging.info(f"Initialized DDIMScheduler with {num_train_timesteps} steps.")
 
 
     # --- Optimizer ---
-    optimizer = th.optim.AdamW(model.parameters(),
-                               lr=learning_rate,
-                               weight_decay=weight_decay)
-    ic(f"Optimizer: AdamW (LR={learning_rate}, WD={weight_decay})")
+    optimizer = th.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    logging.info(f"Optimizer: AdamW (LR={learning_rate}, WD={weight_decay})")
 
 
     # --- LR Scheduler ---
     lr_scheduler = None
     if lr_schedule == 'cos':
-        # Calculate total steps based on dummy data setup (1 batch per epoch)
-        num_training_steps = num_epochs # Since we do 1 step per epoch
+        # Calculate total steps based on dummy data setup (num_batches per epoch)
+        num_batches_per_epoch = 5 # Match the value used in train_loop
+        num_training_steps = num_epochs * num_batches_per_epoch
         lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=min(lr_warmup_steps, num_training_steps // 10), # Adjust warmup
+            num_warmup_steps=min(lr_warmup_steps, num_training_steps // 10),
             num_training_steps=num_training_steps)
-        ic(f"LR Scheduler: Cosine with {lr_warmup_steps} warmup steps.")
+        logging.info(f"LR Scheduler: Cosine with {lr_warmup_steps} warmup steps over {num_training_steps} total steps.")
     else:
-        ic("LR Scheduler: None")
+        logging.info("LR Scheduler: None")
 
 
     # --- AMP Grad Scaler ---
     amp_enabled = use_amp and (device == 'cuda')
+    # Ensure scaler is only enabled if AMP is truly active
     scaler = th.cuda.amp.GradScaler(enabled=amp_enabled)
-    ic(f"AMP Enabled: {amp_enabled}")
+    logging.info(f"AMP Enabled: {amp_enabled}")
 
 
-    # --- Load Checkpoint (Optional) ---
+    # --- Load Checkpoint for Current Stage (Optional) ---
     start_epoch = 0
+    global_step_start = 0
     if load_checkpoint_path is not None and os.path.exists(load_checkpoint_path):
-        ic(f"Loading checkpoint from: {load_checkpoint_path}")
+        logging.info(f"Loading checkpoint for {training_mode.upper()} stage from: {load_checkpoint_path}")
         try:
+            # Load checkpoint for the model being trained in this stage
             checkpoint = th.load(load_checkpoint_path, map_location=device)
             model.load_state_dict(checkpoint['model'])
             optimizer.load_state_dict(checkpoint['optimizer'])
-            scaler.load_state_dict(checkpoint['scaler'])
+            if amp_enabled and 'scaler' in checkpoint and checkpoint['scaler'] is not None:
+                 scaler.load_state_dict(checkpoint['scaler'])
             if lr_scheduler is not None and 'lr_scheduler' in checkpoint:
                 lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            start_epoch = checkpoint.get('epoch', -1) + 1 # Resume from next epoch
-            global_step_loaded = checkpoint.get('global_step', 0)
-            # Load normalizer state if saved and normalizer exists
-            if 'normalizer' in checkpoint and normalizer is not None:
-                 if hasattr(normalizer, 'load_state_dict'):
-                     normalizer.load_state_dict(checkpoint['normalizer'])
-                 elif isinstance(checkpoint['normalizer'], dict) and 'mean' in checkpoint['normalizer']:
-                     normalizer.mean = checkpoint['normalizer']['mean'].to(device)
-                     normalizer.std = checkpoint['normalizer']['std'].to(device)
+            start_epoch = checkpoint.get('epoch', -1) + 1
+            global_step_start = checkpoint.get('global_step', 0) # Load global step
 
-            ic(f"Resuming training from epoch {start_epoch}, global step {global_step_loaded}")
-            # Note: global_step in train_loop will restart from 0 unless passed in
+            # Load normalizer state if saved
+            if 'normalizer' in checkpoint and normalizer is not None:
+                 if hasattr(normalizer, 'load_state_dict') and isinstance(checkpoint['normalizer'], dict):
+                      normalizer.load_state_dict(checkpoint['normalizer'])
+                      logging.info("Loaded normalizer state from checkpoint.")
+                 elif isinstance(checkpoint['normalizer'], dict) and 'mean' in checkpoint['normalizer']: # Legacy format?
+                      normalizer.mean = checkpoint['normalizer']['mean'].to(device)
+                      normalizer.std = checkpoint['normalizer']['std'].to(device)
+                      logging.info("Loaded normalizer state (mean/std) from checkpoint.")
+
+
+            logging.info(f"Resuming {training_mode.upper()} training from epoch {start_epoch}, global step {global_step_start}")
         except Exception as e:
-            print(f"Error loading checkpoint: {e}. Starting training from scratch.")
+            logging.error(f"Error loading checkpoint for {training_mode.upper()} stage: {e}. Starting training from scratch.")
             start_epoch = 0
+            global_step_start = 0 # Reset step count
+    else:
+         logging.info(f"No checkpoint specified or found for {training_mode.upper()} stage. Starting training from scratch.")
 
 
     # --- Run Training Loop ---
-    train_loop(
-        log_dir=log_dir,
-        model=model,
-        sched=sched,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
-        scaler=scaler,
-        writer=writer,
-        cost=cost,
-        normalizer=normalizer,
-        fk_fn=current_fk_fn,
-        device=device,
-        # Pass hyperparameters
-        num_epochs=num_epochs - start_epoch, # Adjust epochs remaining
-        batch_size=batch_size,
-        use_amp=amp_enabled,
-        diffusion_coef=diffusion_coef,
-        grasp_coef=grasp_coef,
-        tsdf_coef=tsdf_coef,
-        collision_coef=collision_coef,
-        distance_coef=distance_coef,
-        euclidean_coef=euclidean_coef,
-        reweight_loss_by_coll=reweight_loss_by_coll,
-        x0_type=x0_type,
-        x0_iter=x0_iter,
-        cost_margin=cost_margin,
-        log_by=log_by,
-        step_max=step_max,
-        save_epoch=save_epoch,
-        # Pass dummy data params
-        seq_len=seq_len,
-        obs_dim=obs_dim,
-        cond_dim=cond_dim,
-        tsdf_dim=tsdf_dim,
-        num_grasp_points=num_grasp_points,
-        num_tsdf_points=num_tsdf_points,
-    )
+    epochs_to_run = num_epochs - start_epoch
+    final_ckpt_path = None # Initialize
+    if epochs_to_run <= 0:
+         logging.info("Loaded checkpoint is already at or beyond the target number of epochs. Exiting.")
+         # If resuming from a completed checkpoint, maybe return its path?
+         final_ckpt_path = load_checkpoint_path
+         # return final_ckpt_path # Or handle differently if needed
+    else:
+        final_ckpt_path = train_loop( # Capture the returned path
+            # Stage control
+            training_mode=training_mode,
+            # Models
+            model=model,
+            giga_model_eval=giga_model_eval, # Pass loaded GIGA model
+            # Standard components
+            log_dir=log_dir,
+            sched=sched, # Pass scheduler (None for GIGA stage)
+            optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
+            scaler=scaler,
+            writer=writer,
+            cost=cost, # Pass cost object
+            normalizer=normalizer, # Pass normalizer
+            fk_fn=current_fk_fn, # Pass FK function
+            device=device,
+            # Hyperparameters
+            num_epochs=epochs_to_run, # Run remaining epochs
+            batch_size=batch_size,
+            use_amp=amp_enabled, # Pass the actual AMP status
+            # Loss Coefficients
+            diffusion_coef=diffusion_coef,
+            grasp_coef=grasp_coef,
+            tsdf_coef=tsdf_coef,
+            collision_coef=collision_coef,
+            distance_coef=distance_coef,
+            euclidean_coef=euclidean_coef,
+            affordance_loss_coef=affordance_loss_coef, # Pass new coeff
+            # Other params
+            reweight_loss_by_coll=reweight_loss_by_coll,
+            x0_type=x0_type if training_mode == 'presto' else None,
+            x0_iter=x0_iter if training_mode == 'presto' else None,
+            cost_margin=cost_margin,
+            log_by=log_by,
+            step_max=step_max,
+            save_epoch=save_epoch,
+            # Dummy Data Params
+            seq_len=seq_len,
+            obs_dim=obs_dim,
+            cond_dim=cond_dim,
+            tsdf_dim=tsdf_dim,
+            num_grasp_points=num_grasp_points,
+            num_tsdf_points=num_tsdf_points,
+            # Pass start global step? train_loop recalculates it currently.
+            # global_step_start=global_step_start # If train_loop needs to resume step count
+        )
 
-    # Log model configuration
-    logging.info(f"\n=== Model Configuration ===")
-    logging.info(f"Model: PrestoGIGA with depth={model_depth}, heads={model_num_heads}, hidden={model_hidden_size}")
-    logging.info(f"Sequence length: {seq_len}, patch size: {model_patch_size if 'model_patch_size' in locals() else 1}")
-    logging.info(f"GIGA encoder: {giga_encoder}, decoder: {giga_decoder}, c_dim: {giga_c_dim}")
-    logging.info(f"Diffusion: beta_schedule={beta_schedule}, steps={num_train_timesteps}, type={prediction_type}")
-    logging.info(f"x0_type: {x0_type}, x0_iter: {x0_iter}")
-    logging.info(f"Optimizer: AdamW with lr={learning_rate}, weight_decay={weight_decay}")
+    logging.info(f"--- Training Run Completed (Mode: {training_mode.upper()}) ---")
+    return final_ckpt_path # Return the path
 
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    # --- Set parameters directly here ---
-    train(
-        log_dir_base="runs/combined_train_standalone_test",
-        use_wandb=False, # Set to True to enable WandB logging
-        # wandb_project="your_project_name",
+    import argparse
+    import logging # Ensure logging is imported here too
+
+    parser = argparse.ArgumentParser(description="Train GIGA then Presto sequentially.")
+    # Remove mode, giga_ckpt, load_ckpt arguments
+    # parser.add_argument('--mode', type=str, required=True, choices=['giga', 'presto'],
+    #                     help="Training stage ('giga' or 'presto').")
+    # parser.add_argument('--giga_ckpt', type=str, default=None,
+    #                     help="Path to pre-trained GIGA checkpoint (required for 'presto' mode with affordance loss).")
+    # parser.add_argument('--load_ckpt', type=str, default=None,
+    #                     help="Path to checkpoint to resume training for the current stage.")
+
+    # Keep general arguments
+    parser.add_argument('--epochs', type=int, default=50, help="Number of epochs to train *each* stage.") # Clarify epoch usage
+    parser.add_argument('--batch_size', type=int, default=8, help="Batch size.")
+    parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate.")
+    parser.add_argument('--aff_coef', type=float, default=0.2, help="Affordance loss coefficient for Presto stage.")
+    parser.add_argument('--device', type=str, default='auto', help="Device ('auto', 'cuda', 'cpu').")
+    parser.add_argument('--no_amp', action='store_true', help="Disable Automatic Mixed Precision.")
+    parser.add_argument('--wandb', action='store_true', help="Enable WandB logging.")
+    parser.add_argument('--log_base', type=str, default="runs/combined_train_sequential", help="Base directory for log/checkpoint runs.")
+    parser.add_argument('--save_freq', type=int, default=10, help="Checkpoint save frequency (in epochs).")
+    # Add other relevant arguments if needed (e.g., separate epochs/lr for each stage if desired)
+
+    args = parser.parse_args()
+
+    # --- Stage 1: GIGA Training ---
+    print("\n" + "="*40)
+    print("=== STARTING GIGA TRAINING STAGE ===")
+    print("="*40 + "\n")
+    # Note: Using basicConfig here might conflict if train() also calls it.
+    # The train() function now handles its own logging setup per run.
+    # Consider setting up a root logger once if needed outside train().
+
+    final_giga_ckpt_path = train(
+        training_mode='giga',
+        giga_checkpoint_path=None, # No pre-trained GIGA needed for GIGA stage
+        load_checkpoint_path=None, # Not supporting resume for combined run yet
+
+        log_dir_base=args.log_base, # Use the base log directory
+        use_wandb=args.wandb,
+        # wandb_project="your_project_name_giga", # Consider separate projects/tags
         # wandb_entity="your_entity_name",
 
-        num_epochs=20,   # Short run for testing
-        batch_size=8,    # Small batch size
-        learning_rate=1e-4,
-        save_epoch=5,
+        num_epochs=args.epochs, # Use shared epoch count
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        save_epoch=args.save_freq,
 
-        # Keep losses simple initially
-        diffusion_coef=1.0,
-        grasp_coef=0.5, # Example: Lower grasp weight
-        tsdf_coef=0.0,
-        collision_coef=0.0, # Disable aux losses for initial test
-        distance_coef=0.0,
-        euclidean_coef=0.0,
-        reweight_loss_by_coll=False,
+        # Loss coefficients for GIGA stage
+        diffusion_coef=0.0,     # Not used in GIGA
+        grasp_coef=1.0,         # GIGA loss
+        tsdf_coef=0.5,          # GIGA loss
+        collision_coef=0.0,     # Not used in GIGA
+        distance_coef=0.0,      # Not used in GIGA
+        euclidean_coef=0.0,     # Not used in GIGA
+        affordance_loss_coef=0.0, # Not used in GIGA
+        reweight_loss_by_coll=False, # Not used in GIGA
 
-        # Model dimensions (match dummy data)
-        seq_len=50,
-        obs_dim=7,
-        cond_dim=104,
-        tsdf_dim=32,
-        num_grasp_points=64,
-        num_tsdf_points=32,
+        # Model dimensions (match dummy data - keep consistent)
+        seq_len=50, obs_dim=7, cond_dim=104, tsdf_dim=32,
+        num_grasp_points=64, num_tsdf_points=32,
 
-        # Simplified model arch for faster testing
-        model_depth=12,
-        model_num_heads=4,
-        model_hidden_size=300,
+        # Model arch params (keep consistent)
+        presto_depth=12, presto_num_heads=4, presto_hidden_size=300, presto_patch_size=2,
+        giga_encoder_type='voxel_simple_local', giga_decoder_type='simple_local',
+        giga_c_dim=32, giga_plane_resolution=32, giga_rot_dim=4,
 
-        device_str="auto", # Use GPU if available
-        use_amp=True,
-        # load_checkpoint_path=None # Set path to resume
+        device_str=args.device,
+        use_amp=(not args.no_amp),
     )
+
+    if final_giga_ckpt_path is None:
+        print("\n" + "="*40)
+        print("!!! ERROR: GIGA training stage did not produce a checkpoint path. Cannot proceed to Presto stage. !!!")
+        print("="*40 + "\n")
+        exit(1) # Exit if GIGA failed to save
+
+    print("\n" + "="*40)
+    print(f"=== GIGA TRAINING STAGE COMPLETE ===")
+    print(f"Final GIGA Checkpoint: {final_giga_ckpt_path}")
+    print("=== STARTING PRESTO TRAINING STAGE ===")
+    print("="*40 + "\n")
+
+    # --- Stage 2: Presto Training ---
+    final_presto_ckpt_path = train(
+        training_mode='presto',
+        giga_checkpoint_path=final_giga_ckpt_path, # Use the checkpoint from Stage 1
+        load_checkpoint_path=None, # Not supporting resume for combined run yet
+
+        log_dir_base=args.log_base, # Use the same base log directory
+        use_wandb=args.wandb,
+        # wandb_project="your_project_name_presto", # Consider separate projects/tags
+        # wandb_entity="your_entity_name",
+
+        num_epochs=args.epochs, # Use shared epoch count
+        batch_size=args.batch_size,
+        learning_rate=args.lr, # Consider if Presto needs a different LR
+        save_epoch=args.save_freq,
+
+        # Loss coefficients for Presto stage
+        diffusion_coef=1.0,         # Presto loss
+        grasp_coef=0.0,             # Not used in Presto (GIGA is eval only)
+        tsdf_coef=0.0,              # Not used in Presto (GIGA is eval only)
+        collision_coef=0.0,         # Presto aux loss (example: disabled)
+        distance_coef=0.0,          # Presto aux loss (example: disabled)
+        euclidean_coef=0.0,         # Presto aux loss (example: disabled)
+        affordance_loss_coef=args.aff_coef, # Presto aux loss using GIGA
+        reweight_loss_by_coll=False,    # Presto aux loss feature
+
+        # Model dimensions (match dummy data - keep consistent)
+        seq_len=50, obs_dim=7, cond_dim=104, tsdf_dim=32,
+        num_grasp_points=64, num_tsdf_points=32,
+
+        # Model arch params (keep consistent)
+        presto_depth=12, presto_num_heads=4, presto_hidden_size=300, presto_patch_size=2,
+        giga_encoder_type='voxel_simple_local', giga_decoder_type='simple_local',
+        giga_c_dim=32, giga_plane_resolution=32, giga_rot_dim=4,
+
+        device_str=args.device,
+        use_amp=(not args.no_amp),
+    )
+
+    print("\n" + "="*40)
+    if final_presto_ckpt_path:
+        print(f"Final Presto Checkpoint: {final_presto_ckpt_path}")
+    print("=== PRESTO TRAINING STAGE COMPLETE ===")
+    print("=== COMBINED RUN FINISHED ===")
+    print("="*40 + "\n")
