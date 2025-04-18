@@ -813,21 +813,24 @@ def train(
          'encoder': giga_encoder, # e.g., 'voxel_simple_local'
          'encoder_kwargs': {
              # --- MODIFICATION: Request only 2D planes ---
+             'c_dim': 32,
              'plane_type': ['xz', 'xy', 'yz'], # REMOVED 'grid'
              # --- Ensure resolution matches giga_plane_resolution ---
-             'plane_resolution': giga_plane_resolution,
+             'plane_resolution': 32,
+             'dim': 3,
+    
              # --- Keep other encoder settings ---
              'grid_resolution': tsdf_dim, # Keep grid_resolution if encoder needs it internally
-             'unet3d': True, # Example
-             'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': giga_c_dim, "in_channels" : 7, "out_channels" : 7}, # Example
-             'unet': True, # Add unet flag if LocalVoxelEncoder uses it for planes
+             'unet3d': False, # Example
+             'unet3d_kwargs': {'num_levels': 3, 'f_maps': 32, 'groups': 1, 'unet_feat_dim': 3, "in_channels" : 7, "out_channels" : 7}, # Example
+             'unet': False, # Add unet flag if LocalVoxelEncoder uses it for planes
              'unet_kwargs': { 'depth': 3,
                 'merge_mode': 'concat',
                 'start_filts': 32, "num_classes" : 2}, # Add unet kwargs if needed
          },
          'decoder': giga_decoder, # e.g., 'simple_local'
-         'decoder_kwargs': {'dim': 3, 'sample_mode': 'bilinear', 'hidden_size': 32, 'concat_feat': True},
-         'c_dim': giga_c_dim, # Feature dim from GIGA encoder *per plane*
+         'decoder_kwargs': {'dim': 3, 'sample_mode': 'bilinear', 'hidden_size': 150, 'c_dim': 32, 'concat_feat': True},
+         'c_dim': 32, # Feature dim from GIGA encoder *per plane*
          'padding': 0.1,
          'n_classes': 1, # For grasp quality
          'mlp_ratio': 4.0,

@@ -86,7 +86,7 @@ class LocalVoxelEncoder(nn.Module):
     '''
 
     def __init__(self, dim=3, c_dim=128, unet=False, unet_kwargs=None, unet3d=False, unet3d_kwargs=None, 
-                 plane_resolution=512, grid_resolution=None, plane_type='xz', kernel_size=3, padding=0.1):
+                 plane_resolution=512, grid_resolution=None, plane_type=['xz', 'xy', 'yz'], kernel_size=3, padding=0.1):
         super().__init__()
         self.actvn = F.relu
         if kernel_size == 1:
@@ -454,6 +454,7 @@ class TSDFEmbedder(nn.Module):
         return x
 
 
+
 class PrestoGIGA(nn.Module):
     """
     Unified model that combines PRESTO's diffusion transformer with GIGA's grasp affordance prediction
@@ -556,7 +557,7 @@ class PrestoGIGA(nn.Module):
                             
         if cfg.encoder_type:
             self.tsdf_encoder = encoder_dict[cfg.encoder_type](
-                c_dim=cfg.c_dim, padding=cfg.padding,
+                padding=cfg.padding,
                 **vars(cfg.encoder_kwargs)
             )
         else:
@@ -586,7 +587,6 @@ class PrestoGIGA(nn.Module):
             # Instantiate the TSDF/Voxel Encoder
             encoder_cls = encoder_dict[cfg.encoder_type]
             self.tsdf_encoder = encoder_cls(
-                c_dim=cfg.c_dim,
                 padding=cfg.padding,
                 **vars(cfg.encoder_kwargs)
             )
@@ -729,6 +729,7 @@ class PrestoGIGA(nn.Module):
                 # tsdf_encoder now returns a dictionary of features (planes or grid)
                 tsdf_features = self.tsdf_encoder(tsdf) # e.g., {'xy': [B,C,H,W], 'xz': [B,C,H,W], 'yz': [B,C,H,W]}
                 print(self.tsdf_encoder, 'tsdf_encoder')
+                print(tsdf_features.keys(), 'tsdf_features_keys')
                 print(tsdf_features['xz'].shape, 'tsdf_features')
                 # Pass the dictionary directly to the embedder
                 tsdf_embed = self.tsdf_embedder(tsdf_features) # Expects dict, outputs [B, hidden_size]
