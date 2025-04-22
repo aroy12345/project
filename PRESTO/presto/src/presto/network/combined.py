@@ -752,7 +752,8 @@ class Presto(nn.Module):
         num_patches = self.x_embedder.num_patches
         # Initialize pos_embed buffer (will be filled later or loaded)
         self.register_buffer('pos_embed', torch.zeros(1, num_patches, cfg.hidden_size), persistent=False)
-
+        self.start_pos = SinusoidalPositionalEncoding(cfg.in_channels, cfg.cond_dim, pad = True)
+        self.end_pos = SinusoidalPositionalEncoding(cfg.in_channels, cfg.cond_dim, pad = True)
 
         # --- Initialize TSDF Encoder and Embedder (for conditioning) ---
         self.tsdf_encoder = None
@@ -825,11 +826,12 @@ class Presto(nn.Module):
              print(f"Positional embedding initialized with shape: {self.pos_embed.shape}")
 
 
+
     def encode_shared(self,
                       x: Optional[torch.Tensor] = None,
                       tsdf: Optional[torch.Tensor] = None,
                       t: Optional[torch.Tensor] = None,
-                      y: Optional[torch.Tensor] = None) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[Dict[str, torch.Tensor]]]:
+                      y: Optional[torch.Tensor] = None, start: Optional[torch.Tensor] = None, end: Optional[torch.Tensor] = None) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[Dict[str, torch.Tensor]]]:
         """
         Encodes inputs (sequence, TSDF, time, condition) into features for DiT blocks.
 
@@ -907,17 +909,24 @@ class Presto(nn.Module):
 
 
         # 4. Conditioning Signal 'c'
+        start_embed = self.start_pos(start) if start is not None else None
+        end_embed = self.end_pos(end) if end is not None else None
+        print(f"[Presto.encode_shared] y shape: {y.shape if y is not None else None}")
+        print(f"[Presto.encode_shared] start shape: {start.shape if start is not None else None}")
+        print(f"[Presto.encode_shared] end shape: {end.shape if end is not None else None}")
+        print(f"[Presto.encode_shared] start_end shape: {start_embed.shape if start_embed is not None else None}")
+        print(f"[Presto.encode_shared] end_end shape: {end_embed.shape if end_embed is not None else None}")
         t_embed = self.t_embedder(t) if t is not None else None
-        y_embed = self.y_embedder(y, train=self.training) if y is not None and self.y_embedder is not None else None
-
+        y_embed = self.y_embedder(y+start_embed+end_embed, train=self.training) if y is not None and self.y_embedder is not None else None
+        
         print(f"[Presto.encode_shared] t_embed shape: {t_embed.shape if t_embed is not None else None}")
         print(f"[Presto.encode_shared] y_embed shape: {y_embed.shape if y_embed is not None else None}")
-
+       
         # Combine conditioning embeddings
+        
         if t_embed is not None and y_embed is not None:
             c = t_embed + y_embed
-        elif t_embed is not None:
-            c = t_embed
+            print('here')
         elif y_embed is not None:
             c = y_embed
         else:
@@ -1008,7 +1017,7 @@ class Presto(nn.Module):
                 sample: torch.FloatTensor,
                 timestep: Union[torch.Tensor, float, int],
                 class_labels: Optional[torch.Tensor] = None,
-                tsdf: Optional[torch.FloatTensor] = None) -> torch.Tensor:
+                tsdf: Optional[torch.FloatTensor] = None, start: Optional[torch.Tensor] = None, end: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Main forward pass for the Presto model.
 
@@ -1023,7 +1032,7 @@ class Presto(nn.Module):
                           Shape: [B, T, C_out]
         """
         # 1. Encode inputs to get features and conditioning
-        features, c, _ = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels)
+        features, c, _ = self.encode_shared(x=sample, tsdf=tsdf, t=timestep, y=class_labels, start=start, end=end)
 
         if features is None or c is None:
              raise ValueError("Failed to generate features or conditioning in encode_shared.")

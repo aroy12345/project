@@ -33,15 +33,14 @@ def generate_dummy_datapoint(
     # Generate dummy collision label (adjust shape/content based on CuroboCost needs)
     # Example: Flattened parameters or an embedding
     col_label_data = torch.randn(cond_dim, device=device) # Match env-label dim for simplicity
-
+    trajectory_data = torch.randn(seq_len, obs_dim, device=device, dtype=torch.float32)
     data_point = {
-        # Trajectory: Shape [S, C] as expected by PRESTO dataset __getitem__
         'trajectory': torch.randn(seq_len, obs_dim, device=device, dtype=torch.float32),
+        'start' : trajectory_data[0],
+        'end' : trajectory_data[-1],
 
-        # Conditioning vector for diffusion
         'env-label': torch.randn(cond_dim, device=device, dtype=torch.float32),
 
-        # Collision information for CuroboCost
         'col-label': col_label_data,
 
         # TSDF Volume (Optional, but often used for GIGA conditioning)

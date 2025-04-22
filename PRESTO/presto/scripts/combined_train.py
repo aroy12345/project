@@ -293,6 +293,8 @@ def train_loop(
                 elif training_mode == 'presto':
                     # Prepare Presto inputs
                     traj_data = batch['trajectory'] # Shape [B, S, C]
+                    start_data = batch['start'] # Shape [B, C]
+                    end_data = batch['end'] # Shape [B, C]
                     # Presto expects [B, C, S]
                     sample_input = traj_data.permute(0,1,2) # [B, C_in, T]
                     print(f"Sample input shape: {sample_input.shape}")
@@ -329,7 +331,9 @@ def train_loop(
                         sample=noisy_samples,
                         timestep=timesteps,
                         class_labels=cond_input,
-                        tsdf=tsdf_input # Pass TSDF conditioning
+                        tsdf=tsdf_input,
+                        start=start_data,
+                        end=end_data # Pass TSDF conditioning
                     )
                     print(f"Model output shape: {model_output.shape}")
 
@@ -1153,7 +1157,7 @@ if __name__ == '__main__':
         num_grasp_points=64, num_tsdf_points=32,
 
         # Model arch params (keep consistent)
-        presto_depth=12, presto_num_heads=4, presto_hidden_size=300, presto_patch_size=2,
+        presto_depth=12, presto_num_heads=5, presto_hidden_size=50, presto_patch_size=2,
         giga_encoder_type='voxel_simple_local', giga_decoder_type='simple_local',
         giga_c_dim=32, giga_plane_resolution=32, giga_rot_dim=4,
 
@@ -1204,7 +1208,7 @@ if __name__ == '__main__':
         num_grasp_points=64, num_tsdf_points=32,
 
         # Model arch params (keep consistent)
-        presto_depth=12, presto_num_heads=4, presto_hidden_size=300, presto_patch_size=2,
+        presto_depth=12, presto_num_heads=5, presto_hidden_size=300, presto_patch_size=2,
         giga_encoder_type='voxel_simple_local', giga_decoder_type='simple_local',
         giga_c_dim=32, giga_plane_resolution=32, giga_rot_dim=4,
 

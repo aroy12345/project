@@ -1,0 +1,47 @@
+2025-04-22 17:17:53,667 - INFO - --- Logging Initialized ---
+
+2025-04-22 17:17:56,151 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,152 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,153 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,336 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,339 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,342 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,343 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,475 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,476 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,485 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,486 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,487 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,487 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,489 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,490 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,491 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,533 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,534 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,536 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,770 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,773 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,792 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-22 17:17:56,792 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-22 17:17:56,896 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,897 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,898 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,898 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,899 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,900 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,903 - INFO - Environment variable for CUROBO_USE_LRU_CACHE is not set, Enabling as default.
+2025-04-22 17:17:56,903 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,904 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,906 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,907 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,908 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,909 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,911 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,912 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,913 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,914 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:56,920 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:57,133 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:57,139 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:57,140 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
+2025-04-22 17:17:57,142 - INFO - Environment variable for CUROBO_TORCH_COMPILE is not set, Disabling.
