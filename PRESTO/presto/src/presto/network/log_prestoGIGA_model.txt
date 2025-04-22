@@ -66,3 +66,19 @@
 
 2025-04-22 17:17:55,336 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
 
+2025-04-22 17:23:53,176 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:25:55,191 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:53:16,605 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:53:36,814 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:56:02,375 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:56:34,297 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:57:28,341 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+
+2025-04-22 17:59:28,290 - prestoGIGA - INFO - --- PrestoGIGA Model Logging Initialized ---
+

@@ -198,9 +198,7 @@ def train_loop(
         logging.info(f"Loss coefficients: diffusion={diffusion_coef}, collision={collision_coef}, "
                      f"distance={distance_coef}, euclidean={euclidean_coef}, affordance={affordance_loss_coef}")
         logging.info(f"Reweight by collision: {reweight_loss_by_coll}")
-        if giga_model_eval is None:
-             print("Warning: Presto training mode started without a pre-trained GIGA model for affordance loss.")
-             affordance_loss_coef = 0.0 # Disable affordance loss if model not provided
+
 
 
     ic(f"Starting training loop for mode: {training_mode}...")
@@ -210,6 +208,7 @@ def train_loop(
         model.train() # Set current model (GIGA or Presto) to train mode
         if training_mode == 'presto' and giga_model_eval is not None:
             giga_model_eval.eval() # Ensure loaded GIGA model is in eval mode
+            logging.info("GIGA model loaded and set to eval mode")
 
         # Log memory
         if device.startswith('cuda'):
@@ -469,10 +468,11 @@ def train_loop(
                                   print(f"Final EE pos shape: {final_ee_pos.shape}") # Should now be [B, 3]
                                   giga_query_points = final_ee_pos.unsqueeze(1) # [B, 1, 3]
                                   print(f"GIGA query points shape: {giga_query_points.shape}")
-
+                                  
                                   giga_model_eval.to(device)
                                   tsdf_features_for_giga = giga_model_eval.encode_tsdf(tsdf_input)
-
+                                  logging.info(f"GIGA model: {giga_model_eval.cfg}")
+                                  logging.info("Successfully ran tsdf encoding.")
                                   if not tsdf_features_for_giga:
                                        print("Warning: Failed to get TSDF features from loaded GIGA model. Skipping affordance loss.")
                                   else:
@@ -481,7 +481,7 @@ def train_loop(
                                            tsdf_features=tsdf_features_for_giga,
                                            p_grasp=giga_query_points
                                        )
-
+                                       logging.info("Successfully ran affordance prediction.")
                                        if 'qual' in affordance_preds:
                                             # Penalize low predicted quality (logits)
                                             # Higher logit = better quality -> minimize negative logit
@@ -898,46 +898,22 @@ def train(
             logging.error(f"GIGA checkpoint not found at {giga_checkpoint_path}. Cannot use affordance loss.")
             affordance_loss_coef = 0.0
         else:
-            try:
-                giga_ckpt = th.load(giga_checkpoint_path, map_location='cpu')
-                logging.info(f"Presto Stage: Successfully loaded GIGA ckpt. Keys found: {list(giga_ckpt.keys())}")
+        
+            giga_ckpt = th.load(giga_checkpoint_path, map_location='cpu')
+            logging.info(f"Presto Stage: Successfully loaded GIGA ckpt. Keys found: {list(giga_ckpt.keys())}")
 
-                # Ensure the checkpoint contains GIGA model state and config dict
-                if 'model' not in giga_ckpt or 'config' not in giga_ckpt:
-                     logging.error("Presto Stage: Checkpoint does not contain 'model' state_dict or 'config' dict. Disabling affordance loss.")
-                     giga_model_eval = None
-                     affordance_loss_coef = 0.0
-                elif giga_ckpt['config'] is None:
-                     logging.error("Presto Stage: Found 'config' key but it is None. Disabling affordance loss.")
-                     giga_model_eval = None
-                     affordance_loss_coef = 0.0
-                else:
-                     logging.info("Presto Stage: Found 'model' and 'config' keys in GIGA checkpoint.")
+            logging.info("Presto Stage: Found 'model' and 'config' keys in GIGA checkpoint.")
                      # Reconstruct GIGAConfig from the saved dictionary
-                     saved_config_dict = giga_ckpt['config']
-                     try:
-                         # Assuming GIGAConfig can be initialized from keyword arguments
-                         giga_config = GIGAConfig(**saved_config_dict)
-                         logging.info("Presto Stage: Reconstructed GIGAConfig from saved dict.")
-                     except Exception as config_e:
-                         logging.error(f"Presto Stage: Failed to reconstruct GIGAConfig from dict: {config_e}. Disabling affordance loss.")
-                         giga_model_eval = None
-                         affordance_loss_coef = 0.0
-                         # Skip model loading if config failed
-                         raise config_e # Or handle differently
+            saved_config_dict = giga_ckpt['config']
+            giga_config = GIGAConfig(**saved_config_dict)
+            logging.info("Presto Stage: Reconstructed GIGAConfig from saved dict.")
+            giga_model_eval = GIGA(giga_config).to(device) # Move to target device
+            giga_model_eval.load_state_dict(giga_ckpt['model'])
+            giga_model_eval.eval() # Set to evaluation mode
+            logging.info(f"GIGA model eval config: {giga_model_eval.cfg}")
+            logging.info("Successfully loaded pre-trained GIGA model for evaluation.")
 
-                     # Instantiate GIGA model using the *reconstructed* config
-                     giga_model_eval = GIGA(giga_config).to(device) # Move to target device
-                     giga_model_eval.load_state_dict(giga_ckpt['model'])
-                     giga_model_eval.eval() # Set to evaluation mode
-                     logging.info(f"GIGA model eval config: {giga_model_eval.cfg}")
-                     logging.info("Successfully loaded pre-trained GIGA model for evaluation.")
-
-            except Exception as e:
-                # Log the broader exception if loading/reconstruction failed
-                logging.error(f"Error loading GIGA checkpoint or reconstructing config: {e}. Disabling affordance loss.")
-                giga_model_eval = None
-                affordance_loss_coef = 0.0
+    
 
 
     # --- Scheduler (Only for Presto stage) ---
@@ -1157,7 +1133,7 @@ if __name__ == '__main__':
         num_grasp_points=64, num_tsdf_points=32,
 
         # Model arch params (keep consistent)
-        presto_depth=12, presto_num_heads=5, presto_hidden_size=50, presto_patch_size=2,
+        presto_depth=12, presto_num_heads=3, presto_hidden_size=50, presto_patch_size=2,
         giga_encoder_type='voxel_simple_local', giga_decoder_type='simple_local',
         giga_c_dim=32, giga_plane_resolution=32, giga_rot_dim=4,
 
