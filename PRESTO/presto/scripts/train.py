@@ -217,7 +217,10 @@ def train_loop(cfg: Config,
                 # trajectory: ground truth joint trajectory
                 # label: env. representation for model conditioning
                 # col: explicit env. representation for cost evaluation
-                # now looks like (..., C, S)
+                # now looks like (..., C, S)    
+                print(f"Batch keys: {batch.keys()}")
+                for key, value in batch.items():
+                    print(f"  Key: '{key}', Type: {value.shape}")
                 true_traj_ds = batch['trajectory'].swapaxes(-1, -2)
 
                 label = batch['env-label']
@@ -563,6 +566,24 @@ def train(cfg: Config):
     amp_ctx = (nullcontext() if (cfg.train.use_amp is None)
                else th.cuda.amp.autocast(enabled=cfg.train.use_amp))
 
+    print("--- Inspecting Loaded Dataset ---")
+    sample_item = train_dataset[0] # Get the first item
+    print(f"Dataset item keys: {sample_item.keys()}")
+    for key, value in sample_item.items():
+        if isinstance(value, th.Tensor):
+            print(f"  Key: '{key}', Type: Tensor, Shape: {value.shape}, Device: {value.device}, Dtype: {value.dtype}")
+        elif isinstance(value, dict):
+            print(f"  Key: '{key}', Type: Dict")
+            for sub_key, sub_value in value.items():
+                if isinstance(sub_value, th.Tensor):
+                    print(f"    Sub-Key: '{sub_key}', Type: Tensor, Shape: {sub_value.shape}, Device: {sub_value.device}, Dtype: {sub_value.dtype}")
+                else:
+                    print(f"    Sub-Key: '{sub_key}', Type: {type(sub_value)}")
+
+        else:
+            print(f"  Key: '{key}', Type: {type(value)}")
+    print("--- End Dataset Inspection ---")
+
     with amp_ctx:
         train_loop(cfg, path, train_dataset, model, sched, cost,
                    optimizer, lr_scheduler, scaler, wandb_logger,
@@ -583,12 +604,14 @@ def main(cfg: Config):
         cfg.merge_with_cli()
     cfg = OmegaConf.to_object(cfg)
 
-    wp.init()
+    #wp.init()
+    print("--- Inspecting Config ---")
     if hasattr(wp, 'ScopedMempool'):
         with wp.ScopedMempool(cfg.device, True):
             train(cfg)
     else:
         train(cfg)
+    
 
 
 if __name__ == '__main__':
