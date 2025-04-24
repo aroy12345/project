@@ -16,6 +16,27 @@ def setup_logging():
 # Call this at the start of your script
 setup_logging()
 
+# --- Specific logger setup for the temp function ---
+def setup_temp_logging():
+    """Sets up a dedicated logger for the temp function writing to log4.txt."""
+    temp_logger = logging.getLogger('temp_logger')
+    temp_logger.setLevel(logging.INFO)
+    # Prevent propagation to the root logger (which logs to log.txt)
+    temp_logger.propagate = False 
+    
+    # Check if handlers are already added to avoid duplicates if called multiple times
+    if not temp_logger.handlers:
+        # Create file handler which logs even debug messages
+        fh = logging.FileHandler('log4.txt', mode='w')
+        fh.setLevel(logging.INFO)
+        # Create formatter and add it to the handlers
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+        # Add the handlers to the logger
+        temp_logger.addHandler(fh)
+        temp_logger.info("--- temp_logger Initialized (log4.txt) ---")
+
+
 from typing import Optional, Union, Dict, Any, List
 from dataclasses import dataclass, replace
 from tqdm.auto import tqdm
@@ -64,8 +85,125 @@ from presto.util.ckpt import (load_ckpt, save_ckpt, last_ckpt)
 import datetime
 
 from presto.util.wandb_logger import WandbLogger
+from typing import Optional, Union, Dict, Any
+from dataclasses import dataclass, replace
+from tqdm.auto import tqdm
+
+import pickle
+import numpy as np
+import logging
+import os
+from omegaconf import OmegaConf
+from icecream import ic
+from contextlib import nullcontext
+import time
+import math
+
+import warp as wp
+import einops
+import torch as th
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+
+from diffusers.schedulers.scheduling_utils import SchedulerMixin
+from diffusers import DDIMScheduler
+from diffusers.optimization import get_cosine_schedule_with_warmup
+
+from presto.data.factory import (DataConfig, get_dataset)
+from presto.data.franka_util import franka_fk
+from presto.network.common import grad_step, MLP
+from presto.network.factory import (ModelConfig, get_model,
+                                    DiffusionConfig, get_scheduler)
+from presto.network.dit_cloud import DiTCloud
+from presto.diffusion.util import pred_x0, diffusion_loss
+from presto.cost.curobo_cost import CuroboCost
+from presto.cost.cached_curobo_cost import CachedCuroboCost, cached_curobo_cost_with_ng
+
+from presto.util.ckpt import (load_ckpt,
+                              save_ckpt,
+                              last_ckpt)
+from presto.util.path import RunPath, get_path
+from presto.util.hydra_cli import hydra_cli
+from presto.util.wandb_logger import WandbLogger
 
 
+@dataclass
+class TrainConfig:
+    learning_rate: float = 3e-4
+    weight_decay: float = 1e-2
+
+    lr_warmup_steps: int = 500
+    lr_schedule: str = 'cos'
+
+    num_epochs: int = 512
+    batch_size: int = 256
+    num_configs: int = 1000
+    save_epoch: int = 1
+    use_amp: Optional[bool] = None
+
+    collision_coef: float = 0.0
+    distance_coef: float = 0.0
+    diffusion_coef: float = 1.0
+    euclidean_coef: float = 0.0
+
+    mp_cost_type: str = 'ddpm'
+
+    cost: CuroboCost.Config = CuroboCost.Config()
+    cached_cost: CachedCuroboCost.Config = CachedCuroboCost.Config()
+    use_cached: bool = True
+    use_ng: bool = False
+
+    log_by: str = 'epoch'
+    step_max: Optional[int] = None
+    check_cost: bool = False
+
+    # FOR flow-matching scheduling
+    weighting_scheme: str = 'logit_normal'
+    logit_mean: float = 0.0
+    logit_std: float = 1.0
+    mode_scale: float = 1.29
+
+
+@dataclass
+class MetaConfig:
+    project: str = 'trajopt'
+    task: str = 'test'
+    group: Optional[str] = None
+    # NOTE(ycho): if `run_id` is None,
+    # then we'll ask for the run_id via `input()` during runtime
+    # if `wandb` is enabled.
+    run_id: Optional[str] = None
+    resume: bool = False
+
+
+@dataclass
+class Config:
+    # Global config
+    meta: MetaConfig = MetaConfig()
+    path: RunPath.Config = RunPath.Config(root='/tmp/presto')
+    train: TrainConfig = TrainConfig()
+    diffusion: DiffusionConfig = DiffusionConfig()
+    model: ModelConfig = ModelConfig()
+    data: DataConfig = DataConfig()
+    device: str = 'cuda:0'
+    cfg_file: Optional[str] = None
+    x0_type: str = 'step'
+    x0_iter: int = 4  # iterate 4-steps
+    load_ckpt: Optional[str] = None
+    reweight_loss_by_coll: bool = False
+    use_wandb: bool = True
+
+    @property
+    def need_traj(self):
+        # We need (unnormalized) joint trajectories only
+        # when evaluating auxiliary collision/distance costs.
+        return (
+            self.train.collision_coef > 0
+            or self.train.distance_coef > 0
+            or self.reweight_loss_by_coll
+            or self.train.euclidean_coef > 0
+        )
 
 
 # --- Helper Function ---
@@ -79,6 +217,20 @@ def dict_to_namespace(d):
         return [dict_to_namespace(item) for item in d]
     else:
         return d
+
+def collate_fn(xlist):
+    cols = [x.pop('col-label') for x in xlist]
+    out = th.utils.data.default_collate(xlist)
+    out['col-label'] = np.stack(cols, axis=0)
+    return out
+
+def _map_device(x, device):
+    """ Recursively map tensors in a dict to a device.  """
+    if isinstance(x, dict):
+        return {k: _map_device(v, device) for (k, v) in x.items()}
+    if isinstance(x, th.Tensor):
+        return x.to(device=device)
+    return x
 
 # --- GIGA Loss Helper Functions ---
 def _qual_loss_fn(pred_logits, target):
@@ -111,6 +263,8 @@ def _tsdf_loss_fn(pred_logits, target):
     # target shape: [B, N_tsdf]
     # Using BCEWithLogitsLoss, ensure target is float
     return F.binary_cross_entropy_with_logits(pred_logits, target.float(), reduction="none")
+
+
 
 def train_loop(
     # --- Stage Control ---
@@ -156,6 +310,7 @@ def train_loop(
     tsdf_dim: int,
     num_grasp_points: int,
     num_tsdf_points: int,
+    trajectory_data = None,
 ):
     """
     Main training loop for a single stage (GIGA or Presto).
@@ -202,6 +357,12 @@ def train_loop(
 
 
     ic(f"Starting training loop for mode: {training_mode}...")
+ 
+    loader = th.utils.data.DataLoader(trajectory_data,
+                                      batch_size=8,
+                                      shuffle=True,
+                                      num_workers=0,
+                                      collate_fn=collate_fn)
 
     for epoch in range(num_epochs):
         logging.info(f"\n=== MODE: {training_mode.upper()} | EPOCH {epoch+1}/{num_epochs} ===")
@@ -231,14 +392,25 @@ def train_loop(
                  num_grasp_points, num_tsdf_points, device='cpu' # Generate on CPU first
              ))
 
+        first_five_batches = []
+        for i, batch_p in enumerate(tqdm(loader, leave=False)):
+            first_five_batches.append(batch_p)
+            if i >= 4: 
+                break
+            
         pbar = tqdm(range(num_batches), desc=f"Epoch {epoch+1}")
-        for batch_idx in pbar:
+        #logging.info(f"epoch {epoch_data} - epoch {len(epoch_data)}")
+        logging.info(f"pbars: {pbar}")
+        logging.info(f"num_batches: {num_batches}")
+        for batch_idx, batch_temp in enumerate(first_five_batches):
             # Create batch
             batch_start = batch_idx * batch_size
             batch_end = batch_start + batch_size
             batch_list = epoch_data[batch_start:batch_end]
             batch = create_batch_from_datapoints(batch_list, device=device)
-
+            logging.info(f"Batch sizes: {batch_size}")
+            logging.info(f"Batch keys: {batch.keys()}")
+            logging.info(f"Batch trajectory data: {batch['trajectory'].shape}")
             optimizer.zero_grad()
 
             # Use AMP context
@@ -291,15 +463,15 @@ def train_loop(
                 # --- Presto Forward and Loss (Stage 2) ---
                 elif training_mode == 'presto':
                     # Prepare Presto inputs
-                    traj_data = batch['trajectory'] # Shape [B, S, C]
-                    start_data = batch['start'] # Shape [B, C]
-                    end_data = batch['end'] # Shape [B, C]
+                    traj_data = batch_temp['trajectory'] # Shape [B, S, C]
+                    start_data = batch_temp['start'] # Shape [B, C]
+                    end_data = batch_temp['goal'] # Shape [B, C]
                     # Presto expects [B, C, S]
                     sample_input = traj_data.permute(0,1,2) # [B, C_in, T]
                     print(f"Sample input shape: {sample_input.shape}")
-                    cond_input = batch['env-label'] # Shape [B, cond_dim]
+                    cond_input = batch_temp['env-label'] # Shape [B, cond_dim]
                     tsdf_input = batch['tsdf'] # Shape [B, 1, D, D, D]
-                    col_label = batch.get('col-label') # For aux losses
+                    col_label = batch_temp.get('col-label') # For aux losses
 
                     # Normalize trajectory data if normalizer is provided
                     if normalizer:
@@ -654,9 +826,9 @@ def train(
     x0_iter: int = 1,
     step_max: Optional[int] = None,
     # --- Model Dimensions (from dummy data) ---
-    seq_len: int = 50,
+    seq_len: int = 256,
     obs_dim: int = 7,
-    cond_dim: int = 104,
+    cond_dim: int = 1294,
     tsdf_dim: int = 32,
     num_grasp_points: int = 64,
     num_tsdf_points: int = 32,
@@ -679,6 +851,7 @@ def train(
     load_checkpoint_path: Optional[str] = None, # Checkpoint for the *current* stage model
     # --- Cost Function Params ---
     cost_margin: float = 0.1,
+    trajectory_data = None,
 ):
     """
     Main training function supporting two stages: 'giga' and 'presto'.
@@ -695,6 +868,7 @@ def train(
     log_dir = os.path.join(log_dir_base, f"{training_mode}_{timestamp}")
     os.makedirs(log_dir, exist_ok=True)
     # Setup file logging within the specific run directory
+    
     log_file_path = os.path.join(log_dir, 'train.log')
     # Remove previous handlers
     for handler in logging.root.handlers[:]:
@@ -748,11 +922,15 @@ def train(
     # Use 'center' and 'radius' as expected by Normalize.__init__
     normalizer = Normalize(center=th.zeros(obs_dim), radius=th.ones(obs_dim))
     logging.info("Initialized identity normalizer.")
-
+   
+    
 
     # --- Cost Function (Primarily for Presto) ---
     cost = None
     if training_mode == 'presto' and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
+        # Setup the dedicated logger for temp function just before it might be needed (though it's called earlier)
+        # This ensures it's set up before any potential Curobo cost setup errors
+  
         # (Keep CuroboCost instantiation logic as before)
         # ... (copy logic from original train function lines 762-780)
         try:
@@ -955,7 +1133,7 @@ def train(
         num_training_steps = num_epochs * num_batches_per_epoch
         lr_scheduler = get_cosine_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=min(lr_warmup_steps, num_training_steps // 10),
+            num_warmup_steps=lr_warmup_steps, # Use the direct value
             num_training_steps=num_training_steps)
         logging.info(f"LR Scheduler: Cosine with {lr_warmup_steps} warmup steps over {num_training_steps} total steps.")
     else:
@@ -1012,9 +1190,12 @@ def train(
     if epochs_to_run <= 0:
          logging.info("Loaded checkpoint is already at or beyond the target number of epochs. Exiting.")
          # If resuming from a completed checkpoint, maybe return its path?
-         final_ckpt_path = load_checkpoint_path
+         final_ckpt_path = load_checkpoint_path # Return the path of the loaded checkpoint
          # return final_ckpt_path # Or handle differently if needed
     else:
+        # Call setup for the temp logger here as well, ensuring it's set before train_loop
+        # if train() wasn't called first (though it is in the current structure)
+
         final_ckpt_path = train_loop( # Capture the returned path
             # Stage control
             training_mode=training_mode,
@@ -1061,16 +1242,45 @@ def train(
             num_tsdf_points=num_tsdf_points,
             # Pass start global step? train_loop recalculates it currently.
             # global_step_start=global_step_start # If train_loop needs to resume step count
+            trajectory_data=trajectory_data,
         )
 
     logging.info(f"--- Training Run Completed (Mode: {training_mode.upper()}) ---")
     return final_ckpt_path # Return the path
 
 
-# --- Main Execution ---
-if __name__ == '__main__':
+# --- Main Execution ---    
+
+@hydra_cli(
+    # NOTE(ycho): you may need to configure `config_path`
+    # depending on where you run this script.
+    # config_path='presto/src/presto/cfg/',
+    config_name='train_v2')
+def main(cfg: Config):
+    print("--- Entering temp function ---")
+    print(f"Initial cfg object type: {type(cfg)}")
+    
+    cfg0 = OmegaConf.structured(Config())
+    print("Created structured Config() as cfg0.")
+    cfg0.merge_with(cfg)
+    print("Merged input cfg into cfg0.")
+    cfg = cfg0
+    if cfg.cfg_file is not None:
+        print(f"cfg.cfg_file found: {cfg.cfg_file}. Merging...")
+        cfg.merge_with(OmegaConf.load(cfg.cfg_file))
+        cfg.merge_with_cli()
+        print("Merged cfg_file and CLI args.")
+    else:
+        print("No cfg.cfg_file found.")
+    cfg = OmegaConf.to_object(cfg)
+    print(f"Converted cfg to object type: {cfg}")
+    trajectory_data = get_dataset(cfg.data, 'train', device='cuda')
+    
     import argparse
     import logging # Ensure logging is imported here too
+    setup_temp_logging()
+
+
 
     parser = argparse.ArgumentParser(description="Train GIGA then Presto sequentially.")
     # Remove mode, giga_ckpt, load_ckpt arguments
@@ -1129,7 +1339,7 @@ if __name__ == '__main__':
         reweight_loss_by_coll=False, # Not used in GIGA
 
         # Model dimensions (match dummy data - keep consistent)
-        seq_len=50, obs_dim=7, cond_dim=104, tsdf_dim=32,
+        seq_len=256, obs_dim=7, cond_dim=1294, tsdf_dim=32,
         num_grasp_points=64, num_tsdf_points=32,
 
         # Model arch params (keep consistent)
@@ -1139,6 +1349,7 @@ if __name__ == '__main__':
 
         device_str=args.device,
         use_amp=(not args.no_amp),
+        trajectory_data=trajectory_data
     )
 
     if final_giga_ckpt_path is None:
@@ -1180,7 +1391,7 @@ if __name__ == '__main__':
         reweight_loss_by_coll=False,    # Presto aux loss feature
 
         # Model dimensions (match dummy data - keep consistent)
-        seq_len=50, obs_dim=7, cond_dim=104, tsdf_dim=32,
+        seq_len=256, obs_dim=7, cond_dim=1294, tsdf_dim=32,
         num_grasp_points=64, num_tsdf_points=32,
 
         # Model arch params (keep consistent)
@@ -1190,6 +1401,7 @@ if __name__ == '__main__':
 
         device_str=args.device,
         use_amp=(not args.no_amp),
+        trajectory_data=trajectory_data
     )
 
     print("\n" + "="*40)
@@ -1198,3 +1410,6 @@ if __name__ == '__main__':
     print("=== PRESTO TRAINING STAGE COMPLETE ===")
     print("=== COMBINED RUN FINISHED ===")
     print("="*40 + "\n")
+
+if __name__ == '__main__':
+    main()

@@ -6,6 +6,8 @@ from tqdm.auto import tqdm
 
 import pickle
 import numpy as np
+import logging
+import os
 from omegaconf import OmegaConf
 from icecream import ic
 from contextlib import nullcontext
@@ -77,6 +79,24 @@ def _map_device(x, device):
     if isinstance(x, th.Tensor):
         return x.to(device=device)
     return x
+
+def setup_logging():
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_file_path = os.path.join(script_dir, 'log3.txt')
+    
+    logging.basicConfig(
+        filename=log_file_path,
+        filemode='w',  # 'w' to overwrite, 'a' to append
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    logging.info("--- Logging Initialized ---\n")
+    logging.info(f"Log file created at: {log_file_path}")
+
+
+
+
 
 
 @dataclass
@@ -187,6 +207,7 @@ def train_loop(cfg: Config,
     # NOTE(ycho): in case the prediction iterates through
     # multiple steps, we cache the evenly spaced diffusion intervals
     # up to the step corresponding to the noise lvels.
+    logging.info('here')
     if cfg.x0_type == 'iter':
         # Cache all possible substeps shorter than `num_train_diffusion_iter`.
         substepss = [
@@ -218,9 +239,13 @@ def train_loop(cfg: Config,
                 # label: env. representation for model conditioning
                 # col: explicit env. representation for cost evaluation
                 # now looks like (..., C, S)    
-                print(f"Batch keys: {batch.keys()}")
+                logging.info(f"Batch keys: {batch.keys()}")
                 for key, value in batch.items():
-                    print(f"  Key: '{key}', Type: {value.shape}")
+                    if isinstance(value, th.Tensor):
+                        logging.info(f"Key: {key}, Value: {value.shape}")
+                    else:
+                        logging.info(f"Key: {key}, Value: {value}")
+                
                 true_traj_ds = batch['trajectory'].swapaxes(-1, -2)
 
                 label = batch['env-label']
@@ -441,12 +466,20 @@ def train(cfg: Config):
     device: str = cfg.device
 
     # basic layout = B,T,D
+    setup_logging()
+    logging.info(f"Starting training with configs: {cfg}")
+    logging.info(f"Device: {cfg.data}")
     train_dataset = get_dataset(cfg.data, 'train',
                                 # NOTE(ycho): direct GPU-load is
                                 # infeasible for larger datasets
                                 # device=device
                                 device='cpu')
-
+    logging.info(f"Train dataset: {train_dataset[0].keys()}")
+    for key, value in train_dataset[0].items():
+        if isinstance(value, th.Tensor):
+            logging.info(f"Key: {key}, Value: {value.shape}")
+        else:
+            logging.info(f"Key: {key}, Value: {value}")
     # Update model config based on dataset specification.
     obs_dim = train_dataset.obs_dim
     seq_len = train_dataset.seq_len
@@ -463,7 +496,7 @@ def train(cfg: Config):
     # Initialize the experiment, and save the configuration.
     path = RunPath(cfg.path)
     ic(cfg)
-
+    logging.info(f"Path: {path}")
     # Create the model and scheduler.
     model = get_model(cfg.model, device=cfg.device)
     sched = get_scheduler(cfg.diffusion)
@@ -471,7 +504,7 @@ def train(cfg: Config):
     ic(sched)
 
     # Create (wandb) logger.
-    if cfg.use_wandb:
+    if False:
         if cfg.meta.run_id is None:
             run_id = input('Name this run:')
             if not cfg.meta.resume:
@@ -582,7 +615,7 @@ def train(cfg: Config):
 
         else:
             print(f"  Key: '{key}', Type: {type(value)}")
-    print("--- End Dataset Inspection ---")
+    logging.info("--- End Dataset Inspection ---")
 
     with amp_ctx:
         train_loop(cfg, path, train_dataset, model, sched, cost,
@@ -596,16 +629,33 @@ def train(cfg: Config):
     # config_path='presto/src/presto/cfg/',
     config_name='train_v2')
 def main(cfg: Config):
+    setup_logging()
+    logging.info("--- Entering temp function ---")
+    logging.info(f"Initial cfg object type: {type(cfg)}")
+    
     cfg0 = OmegaConf.structured(Config())
+    logging.info("Created structured Config() as cfg0.")
     cfg0.merge_with(cfg)
+    logging.info("Merged input cfg into cfg0.")
     cfg = cfg0
     if cfg.cfg_file is not None:
+        logging.info(f"cfg.cfg_file found: {cfg.cfg_file}. Merging...")
         cfg.merge_with(OmegaConf.load(cfg.cfg_file))
         cfg.merge_with_cli()
+        logging.info("Merged cfg_file and CLI args.")
+    else:
+        logging.info("No cfg.cfg_file found.")
     cfg = OmegaConf.to_object(cfg)
+    logging.info(f"Converted cfg to object type: {cfg}")
+    logging.info("--- Exiting temp function, returning cfg ---")
+    train_dataset = get_dataset(cfg.data, 'train',
+                                # NOTE(ycho): direct GPU-load is
+                                # infeasible for larger datasets
+                                # device=device
+                                device='cpu')
 
     #wp.init()
-    print("--- Inspecting Config ---")
+    logging.info("--- Inspecting Config ---")
     if hasattr(wp, 'ScopedMempool'):
         with wp.ScopedMempool(cfg.device, True):
             train(cfg)

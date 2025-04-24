@@ -750,7 +750,7 @@ class Presto(nn.Module):
             self.y_embedder = None # Handle case where conditioning is off
 
         num_patches = self.x_embedder.num_patches
-        # Initialize pos_embed buffer (will be filled later or loaded)
+       
         self.register_buffer('pos_embed', torch.zeros(1, num_patches, cfg.hidden_size), persistent=False)
         self.start_pos = SinusoidalPositionalEncoding(cfg.in_channels, cfg.cond_dim, pad = True)
         self.end_pos = SinusoidalPositionalEncoding(cfg.in_channels, cfg.cond_dim, pad = True)
@@ -820,10 +820,10 @@ class Presto(nn.Module):
     def _initialize_pos_embed(self):
         """Initialize the positional embedding buffer."""
         if hasattr(self, 'pos_embed') and self.pos_embed is not None:
-             print("Initializing Presto positional embeddings...")
+           
              pos_embed_1d = get_1d_sincos_pos_embed(self.pos_embed.shape[-1], self.x_embedder.num_patches)
              self.pos_embed.data.copy_(torch.from_numpy(pos_embed_1d).float().unsqueeze(0))
-             print(f"Positional embedding initialized with shape: {self.pos_embed.shape}")
+         
 
 
 
@@ -1047,8 +1047,4 @@ class Presto(nn.Module):
     def device(self):
         return next(iter(self.parameters())).device
 
-    # Keep unpatchify method if needed elsewhere, but forward_diffusion handles it now
-    # def unpatchify(self, x): ...
-
-    # Keep set_pos_embed if needed for external initialization, but _initialize_pos_embed handles internal setup
-    # def set_pos_embed(self, grid_size): ...
+   
