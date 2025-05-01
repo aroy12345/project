@@ -359,7 +359,7 @@ def train_loop(
     ic(f"Starting training loop for mode: {training_mode}...")
  
     loader = th.utils.data.DataLoader(trajectory_data,
-                                      batch_size=8,
+                                      batch_size=16,
                                       shuffle=True,
                                       num_workers=0,
                                       collate_fn=collate_fn)
@@ -1293,7 +1293,7 @@ def main(cfg: Config):
 
     # Keep general arguments
     parser.add_argument('--epochs', type=int, default=50, help="Number of epochs to train *each* stage.") # Clarify epoch usage
-    parser.add_argument('--batch_size', type=int, default=8, help="Batch size.")
+    parser.add_argument('--batch_size', type=int, default=16, help="Batch size.")
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate.")
     parser.add_argument('--aff_coef', type=float, default=0.2, help="Affordance loss coefficient for Presto stage.")
     parser.add_argument('--device', type=str, default='auto', help="Device ('auto', 'cuda', 'cpu').")
