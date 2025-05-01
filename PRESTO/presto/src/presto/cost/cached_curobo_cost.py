@@ -453,6 +453,7 @@ class CachedCuroboCost(nn.Module):
 
         if c is not None:
             # c is dict of (batch_size X num-prim...) things
+            print("CACHED")
             self.reset(c)
 
         # print(q.amin(), q.amax(), q.shape)

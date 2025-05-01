@@ -311,6 +311,7 @@ def train_loop(
     num_grasp_points: int,
     num_tsdf_points: int,
     trajectory_data = None,
+    cost_v = None
 ):
     """
     Main training loop for a single stage (GIGA or Presto).
@@ -543,84 +544,35 @@ def train_loop(
                     else:
                         pred_x0_denorm = pred_x0_vis # Use directly if no normalization
 
-                    # Reshape pred_x0_denorm from [B, C, T] to [B, T, C] for cost/fk functions
-                    pred_x0_traj = pred_x0_denorm.permute(0, 1, 2) # [B, T, C_in]
+                   
+                    pred_x0_traj = pred_x0_denorm.permute(0, 1, 2)
+                    print(f"pred_x0_traj: {pred_x0_traj.shape}")
+                    if cost_v and collision_coef > 0:
+                        print('check')
+                        print(f"cost_v: {cost_v}")
+                        loss_coll = cost_v(pred_x0_traj, col_label).mean()
+                        print(f"loss_coll: {loss_coll}")
+                        loss_dict['collision_loss'] = loss_coll
+                        total_loss += collision_coef * loss_coll
+                    
+                    if distance_coef > 0:
+                        loss_dist = F.mse_loss(pred_x0_traj[..., 1:, :],
+                                                pred_x0_traj[..., :-1, :])
+                        print(f"loss_dist: {loss_dist}")
+                        loss_dict['distance_loss'] = loss_dist
+                        total_loss += distance_coef * loss_dist
 
-                    # Collision/Distance Loss (using CuroboCost)
-                    if cost is not None and (collision_coef > 0 or distance_coef > 0 or reweight_loss_by_coll):
-                         if col_label is None:
-                              print("Warning: CuroboCost requires 'col-label' in batch, but it's missing. Skipping cost-based losses.")
-                         else:
-                              # Ensure cost object batch size matches current batch
-                              if hasattr(cost, 'batch_size') and cost.batch_size != batch_size:
-                                   print(f"Warning: Adjusting CuroboCost batch size from {cost.batch_size} to {batch_size}")
-                                   # This might require re-instantiation or a setter method in CuroboCost
-                                   # cost.update_batch_size(batch_size) # Assuming such a method exists
-                                   # For simplicity, we'll proceed, but this could be an issue.
-
-                              # Calculate cost (assuming cost function takes trajectory and conditioning)
-                              # The exact signature depends on CuroboCost implementation
-                              # Example: cost_out = cost.forward(pred_x0_traj, config_data=col_label)
-                              # This part needs to be adapted based on the actual CuroboCost API
-                              try:
-                                   # Placeholder: Assume cost.forward returns a dict with 'cost' and 'distance'
-                                   # You'll need to replace this with the actual call
-                                   cost_results = {'cost': th.rand(batch_size, seq_len, device=device) * 0.1,
-                                                   'distance': th.rand(batch_size, seq_len, device=device) * 0.05}
-                                   print("Placeholder CuroboCost calculation used.")
-
-                                   # Collision Loss (e.g., hinge loss on cost)
-                                   if collision_coef > 0:
-                                        coll_cost = cost_results['cost']
-                                        # Example hinge loss: penalize cost > margin
-                                        coll_loss = F.relu(coll_cost - cost_margin).mean()
-                                        loss_dict['collision_loss'] = coll_loss
-                                        total_loss += collision_coef * coll_loss
-
-                                   # Distance Loss (e.g., mean distance from cost output)
-                                   if distance_coef > 0:
-                                        dist_cost = cost_results['distance']
-                                        dist_loss = dist_cost.mean() # Example: just mean distance
-                                        loss_dict['distance_loss'] = dist_loss
-                                        total_loss += distance_coef * dist_loss
-
-                                   # Reweighting (Example based on collision cost)
-                                   if reweight_loss_by_coll:
-                                        # Example: Increase weight for trajectories with high collision cost
-                                        with th.no_grad():
-                                             # Use max cost along trajectory as indicator
-                                             max_coll_cost = cost_results['cost'].max(dim=1)[0] # [B]
-                                             # Simple reweighting: higher weight if cost > margin
-                                             weights = th.where(max_coll_cost > cost_margin, 2.0, 1.0)
-                                             weights = weights / weights.mean() # Normalize weights
-                                        total_loss = total_loss * weights.mean() # Apply average weight adjustment
-                                        loss_dict['reweight_factor'] = weights.mean()
-
-                              except Exception as e:
-                                   print(f"Error during CuroboCost calculation: {e}. Skipping cost losses for this step.")
-
-
-                    # Euclidean Loss (using FK)
                     if fk_fn is not None and euclidean_coef > 0:
-                        # Get target trajectory end-effector positions
-                        target_traj = sample_input.permute(0,1,2) # [B, T, C_in]
-                        # Call FK for the target trajectory (flatten batch and time dims)
-                        target_ee_transform = fk_fn(target_traj.reshape(-1, obs_dim)) # Shape: [B*T, 4, 4]
-                        # Extract position and reshape back
-                        target_ee_pos = target_ee_transform[:, :3, 3].view(batch_size, seq_len, 3) # Shape: [B, T, 3]
-
-                        # Get predicted trajectory end-effector positions
-                        # Call FK for the predicted trajectory (flatten batch and time dims)
-                        pred_ee_transform = fk_fn(pred_x0_traj.reshape(-1, obs_dim)) # Shape: [B*T, 4, 4]
-                        # Extract position and reshape back
-                        pred_ee_pos = pred_ee_transform[:, :3, 3].view(batch_size, seq_len, 3) # Shape: [B, T, 3]
-
-                        # Calculate L2 distance between EE positions
-                        eucl_loss = th.linalg.norm(target_ee_pos - pred_ee_pos, dim=-1).mean()
-                        loss_dict['euclidean_loss'] = eucl_loss
-                        total_loss += euclidean_coef * eucl_loss
-
-                    # --- Auxiliary Affordance Loss (using pre-trained GIGA) ---
+                        x_pred_sd = franka_fk(pred_x0_traj)
+                        with th.no_grad():
+                                x_true_sd = franka_fk(
+                                    dataset.normalizer.unnormalize(batch_temp['trajectory'])
+                                )
+                        loss_eucd = F.mse_loss(x_pred_sd, x_true_sd)
+                        print(f"loss_euclidean: {loss_eucd}")
+                        loss_dict['euclidean_loss'] = loss_eucd
+                        total_loss += euclidean_coef * loss_eucd
+                        
                     print(f"Affordance loss coef: {affordance_loss_coef}")
                     if giga_model_eval is not None and affordance_loss_coef > 0:
                         if fk_fn is None:
@@ -671,6 +623,7 @@ def train_loop(
                     print(f"total loss.shape: {total_loss.shape}")
                     print(f"Total loss: {total_loss.item():.4f}")
                     loss_dict['total_loss'] = total_loss
+                    print(f"loss_dict: {loss_dict}")
 
             # --- Backpropagation ---
             if total_loss > 0 : # Check if loss is valid before backward pass
@@ -852,6 +805,7 @@ def train(
     # --- Cost Function Params ---
     cost_margin: float = 0.1,
     trajectory_data = None,
+    cost_v = None
 ):
     """
     Main training function supporting two stages: 'giga' and 'presto'.
@@ -1243,6 +1197,7 @@ def train(
             # Pass start global step? train_loop recalculates it currently.
             # global_step_start=global_step_start # If train_loop needs to resume step count
             trajectory_data=trajectory_data,
+            cost_v = cost_v
         )
 
     logging.info(f"--- Training Run Completed (Mode: {training_mode.upper()}) ---")
@@ -1275,6 +1230,11 @@ def main(cfg: Config):
     cfg = OmegaConf.to_object(cfg)
     print(f"Converted cfg to object type: {cfg}")
     trajectory_data = get_dataset(cfg.data, 'train', device='cuda')
+    cost_v = CachedCuroboCost(cfg.train.cached_cost,
+                                batch_size=cfg.train.batch_size,
+                                device=cfg.device,
+                                n_prim={'sphere': 12, 'cuboid': 19, 'cylinder': 14},
+                                )
     
     import argparse
     import logging # Ensure logging is imported here too
@@ -1384,9 +1344,9 @@ def main(cfg: Config):
         diffusion_coef=1.0,         # Presto loss
         grasp_coef=0.0,             # Not used in Presto (GIGA is eval only)
         tsdf_coef=0.0,              # Not used in Presto (GIGA is eval only)
-        collision_coef=0.0,         # Presto aux loss (example: disabled)
-        distance_coef=0.0,          # Presto aux loss (example: disabled)
-        euclidean_coef=0.0,         # Presto aux loss (example: disabled)
+        collision_coef=0.1,         # Presto aux loss (example: disabled)
+        distance_coef=0.1,          # Presto aux loss (example: disabled)
+        euclidean_coef=0.1,         # Presto aux loss (example: disabled)
         affordance_loss_coef=args.aff_coef, # Presto aux loss using GIGA
         reweight_loss_by_coll=False,    # Presto aux loss feature
 
@@ -1401,7 +1361,8 @@ def main(cfg: Config):
 
         device_str=args.device,
         use_amp=(not args.no_amp),
-        trajectory_data=trajectory_data
+        trajectory_data=trajectory_data,
+        cost_v = cost_v
     )
 
     print("\n" + "="*40)

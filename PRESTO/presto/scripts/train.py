@@ -245,14 +245,14 @@ def train_loop(cfg: Config,
                         logging.info(f"Key: {key}, Value: {value.shape}")
                     else:
                         logging.info(f"Key: {key}, Value: {value}")
+                        
+                  
                 
-                true_traj_ds = batch['trajectory'].swapaxes(-1, -2)
+                true_traj_ds = batch['trajectory']
 
                 label = batch['env-label']
-                if cfg.train.use_cached:
-                    col = batch['prim-label']
-                else:
-                    col = batch['col-label']
+                
+                col = batch['col-label']
 
                 # Add noise and sample timesteps.
                 steps = th.randint(
@@ -319,7 +319,7 @@ def train_loop(cfg: Config,
                     # It also swaps the channel dimension and the sequence
                     # dimension (...CS -> ...SC).
                     u_pred_sd = dataset.normalizer.unnormalize(
-                        pred_traj_ds.swapaxes(-1, -2))
+                        pred_traj_ds)
 
                 # Optionally evaluate collision and distance costs.
                 if cfg.train.collision_coef > 0:
@@ -327,6 +327,7 @@ def train_loop(cfg: Config,
                     assert (u_pred_sd.shape[-2] == dataset.seq_len)
                     if cfg.train.use_ng:
                         # numerical gradient
+                        logging.info(f"cfg.train.use CHECK {cfg.train.use_ng}")
                         loss_coll = cached_curobo_cost_with_ng(
                             u_pred_sd,
                             lambda q: cost(q, col)).mean()
@@ -478,8 +479,7 @@ def train(cfg: Config):
     for key, value in train_dataset[0].items():
         if isinstance(value, th.Tensor):
             logging.info(f"Key: {key}, Value: {value.shape}")
-        else:
-            logging.info(f"Key: {key}, Value: {value}")
+       
     # Update model config based on dataset specification.
     obs_dim = train_dataset.obs_dim
     seq_len = train_dataset.seq_len
@@ -543,15 +543,19 @@ def train(cfg: Config):
     # auxilirary loss terms from Curobo.
     # cost - cost for training
     # cost_v - cost for validation
+    logging.info('here')
     cost_v = None
+    logging.info(f"cfg train_cost: {cfg.train.use_cached}")
     if cfg.train.use_cached:
+        logging.info(f"cfg cached_cost: {cfg.train.cached_cost}")
         cost = CachedCuroboCost(cfg.train.cached_cost,
                                 batch_size=cfg.train.batch_size,
                                 device=cfg.device,
-                                n_prim=train_dataset._num_prims,
+                                n_prim={'sphere': 12, 'cuboid': 19, 'cylinder': 14},
                                 )
         # NOTE(ycho): _only_ for validation
         if cfg.train.check_cost:
+            logging.info(f"cfg cached_cost2: {cfg.train.cached_cost}")
             cost_v = CachedCuroboCost(cfg.train.cached_cost,
                                       batch_size=cfg.train.batch_size,
                                       device=cfg.device,
@@ -561,6 +565,7 @@ def train(cfg: Config):
         cost = CuroboCost(cfg.train.cost,
                           batch_size=cfg.train.batch_size,
                           device=cfg.device)
+        print(cost)
         if cfg.train.check_cost:
             cost_v = CuroboCost(cfg.train.cost,
                                 batch_size=cfg.train.batch_size,
