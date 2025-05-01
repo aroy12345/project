@@ -223,6 +223,8 @@ def collate_fn(xlist):
     out = th.utils.data.default_collate(xlist)
     out['col-label'] = np.stack(cols, axis=0)
     return out
+    
+
 
 def _map_device(x, device):
     """ Recursively map tensors in a dict to a device.  """
@@ -547,7 +549,7 @@ def train_loop(
                    
                     pred_x0_traj = pred_x0_denorm.permute(0, 1, 2)
                     print(f"pred_x0_traj: {pred_x0_traj.shape}")
-                    if cost_v and collision_coef > 0:
+                    if cost_v and collision_coef > 0 and False:
                         print('check')
                         print(f"cost_v: {cost_v}")
                         loss_coll = cost_v(pred_x0_traj, col_label).mean()
@@ -566,7 +568,7 @@ def train_loop(
                         x_pred_sd = franka_fk(pred_x0_traj)
                         with th.no_grad():
                                 x_true_sd = franka_fk(
-                                    dataset.normalizer.unnormalize(batch_temp['trajectory'])
+                                    normalizer.unnormalize(batch_temp['trajectory'])
                                 )
                         loss_eucd = F.mse_loss(x_pred_sd, x_true_sd)
                         print(f"loss_euclidean: {loss_eucd}")
@@ -615,7 +617,7 @@ def train_loop(
                                             print(f"Predicted qual logits: {predicted_qual_logits}")
                                             afford_loss = -predicted_qual_logits.sum() # Minimize negative quality
                                             loss_dict['affordance_loss'] = afford_loss
-                                            total_loss += affordance_loss_coef * afford_loss*3
+                                            total_loss += affordance_loss_coef * afford_loss
                                             print(f"Calculated affordance loss: {afford_loss.item():.4f}")
                                        else:
                                             print("Warning: 'qual' not found in loaded GIGA model output. Skipping affordance loss.")
@@ -767,7 +769,7 @@ def train(
     collision_coef: float = 0.5,
     distance_coef: float = 0.5,
     euclidean_coef: float = 0.5,
-    affordance_loss_coef: float = 0.2, # NEW coefficient for Presto's affordance loss
+    affordance_loss_coef: float = 1.0, # NEW coefficient for Presto's affordance loss
     reweight_loss_by_coll: bool = True,
     # --- Diffusion Settings (for Presto) ---
     beta_schedule='squaredcos_cap_v2',
@@ -1255,7 +1257,7 @@ def main(cfg: Config):
     parser.add_argument('--epochs', type=int, default=50, help="Number of epochs to train *each* stage.") # Clarify epoch usage
     parser.add_argument('--batch_size', type=int, default=16, help="Batch size.")
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate.")
-    parser.add_argument('--aff_coef', type=float, default=0.2, help="Affordance loss coefficient for Presto stage.")
+    parser.add_argument('--aff_coef', type=float, default=1.0, help="Affordance loss coefficient for Presto stage.")
     parser.add_argument('--device', type=str, default='auto', help="Device ('auto', 'cuda', 'cpu').")
     parser.add_argument('--no_amp', action='store_true', help="Disable Automatic Mixed Precision.")
     parser.add_argument('--wandb', action='store_true', help="Enable WandB logging.")
@@ -1345,8 +1347,8 @@ def main(cfg: Config):
         grasp_coef=0.0,             # Not used in Presto (GIGA is eval only)
         tsdf_coef=0.0,              # Not used in Presto (GIGA is eval only)
         collision_coef=0.1,         # Presto aux loss (example: disabled)
-        distance_coef=0.1,          # Presto aux loss (example: disabled)
-        euclidean_coef=0.1,         # Presto aux loss (example: disabled)
+        distance_coef=0.01,          # Presto aux loss (example: disabled)
+        euclidean_coef=1.0,         # Presto aux loss (example: disabled)
         affordance_loss_coef=args.aff_coef, # Presto aux loss using GIGA
         reweight_loss_by_coll=False,    # Presto aux loss feature
 
